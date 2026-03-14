@@ -106,6 +106,11 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
     this.chatStates = /* @__PURE__ */ new Map();
     // Edges
     this.edges = /* @__PURE__ */ new Map();
+    // Edge drawing state
+    this.isDrawingEdge = false;
+    this.edgeDrawFromNode = null;
+    this.edgeDrawFromSide = null;
+    this.edgeDrawTempLine = null;
     this.isLoaded = false;
     this.isSaving = false;
     this.saveTimeout = null;
@@ -416,6 +421,12 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
         this.selectionBox.style.width = `${width}px`;
         this.selectionBox.style.height = `${height}px`;
         this.updateSelectionFromBox(left, top, width, height);
+      } else if (this.isDrawingEdge && this.edgeDrawTempLine) {
+        const rect = this.canvas.getBoundingClientRect();
+        const canvasX = (e.clientX - rect.left - this.panX) / this.scale;
+        const canvasY = (e.clientY - rect.top - this.panY) / this.scale;
+        this.edgeDrawTempLine.setAttribute("x2", String(canvasX));
+        this.edgeDrawTempLine.setAttribute("y2", String(canvasY));
       } else if (this.draggedNode) {
         const rect = this.canvas.getBoundingClientRect();
         const mouseX = (e.clientX - rect.left - this.panX) / this.scale;
@@ -442,7 +453,28 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
         this.updateNodeSize(this.resizingNode, newWidth, newHeight);
       }
     });
-    document.addEventListener("mouseup", () => {
+    document.addEventListener("mouseup", (e) => {
+      if (this.isDrawingEdge) {
+        const targetInfo = this.findTargetHandle(e);
+        if (targetInfo && targetInfo.nodeId !== this.edgeDrawFromNode) {
+          const duplicate = Array.from(this.edges.values()).some(
+            (edge) => edge.from === this.edgeDrawFromNode && edge.to === targetInfo.nodeId || edge.from === targetInfo.nodeId && edge.to === this.edgeDrawFromNode
+          );
+          if (!duplicate) {
+            this.addEdge(this.edgeDrawFromNode, targetInfo.nodeId);
+            this.triggerSave();
+          }
+        }
+        if (this.edgeDrawTempLine) {
+          this.edgeDrawTempLine.remove();
+          this.edgeDrawTempLine = null;
+        }
+        this.isDrawingEdge = false;
+        this.edgeDrawFromNode = null;
+        this.edgeDrawFromSide = null;
+        this.canvas.removeClass("drawing-edge");
+        return;
+      }
       if (this.isPanning || this.draggedNode || this.resizingNode) {
         this.triggerSave();
       }
@@ -1058,7 +1090,24 @@ ${msg.content}
     }
     const d = `M ${fromX} ${fromY} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${toX} ${toY}`;
     path.setAttribute("d", d);
+    const hitArea = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    hitArea.setAttribute("d", d);
+    hitArea.setAttribute("class", "rabbitmap-edge-hitarea");
+    hitArea.setAttribute("data-edge-id", edge.id);
+    group.appendChild(hitArea);
     group.appendChild(path);
+    group.style.pointerEvents = "auto";
+    group.addEventListener("mouseenter", () => {
+      path.classList.add("rabbitmap-edge-hover");
+    });
+    group.addEventListener("mouseleave", () => {
+      path.classList.remove("rabbitmap-edge-hover");
+    });
+    group.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showEdgeContextMenu(edge.id, e);
+    });
     const tangentX = toX - cx2;
     const tangentY = toY - cy2;
     const len = Math.sqrt(tangentX * tangentX + tangentY * tangentY);
@@ -1079,6 +1128,94 @@ ${msg.content}
   }
   updateEdges() {
     this.renderAllEdges();
+  }
+  getHandlePosition(node, side) {
+    switch (side) {
+      case "top":
+        return { x: node.x + node.width / 2, y: node.y };
+      case "right":
+        return { x: node.x + node.width, y: node.y + node.height / 2 };
+      case "bottom":
+        return { x: node.x + node.width / 2, y: node.y + node.height };
+      case "left":
+        return { x: node.x, y: node.y + node.height / 2 };
+    }
+  }
+  startEdgeDrawing(nodeId, side, e) {
+    this.isDrawingEdge = true;
+    this.edgeDrawFromNode = nodeId;
+    this.edgeDrawFromSide = side;
+    this.canvas.addClass("drawing-edge");
+    const node = this.nodes.get(nodeId);
+    if (!node)
+      return;
+    const anchor = this.getHandlePosition(node, side);
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", String(anchor.x));
+    line.setAttribute("y1", String(anchor.y));
+    line.setAttribute("x2", String(anchor.x));
+    line.setAttribute("y2", String(anchor.y));
+    line.setAttribute("class", "rabbitmap-edge-temp");
+    this.edgesContainer.appendChild(line);
+    this.edgeDrawTempLine = line;
+  }
+  findTargetHandle(e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (el) {
+      const handle = el.closest(".rabbitmap-connection-handle");
+      if (handle) {
+        const nodeId = handle.getAttribute("data-node-id");
+        const side = handle.getAttribute("data-side");
+        if (nodeId && side)
+          return { nodeId, side };
+      }
+    }
+    const rect = this.canvas.getBoundingClientRect();
+    const canvasX = (e.clientX - rect.left - this.panX) / this.scale;
+    const canvasY = (e.clientY - rect.top - this.panY) / this.scale;
+    const threshold = 30;
+    let best = null;
+    const sides = ["top", "right", "bottom", "left"];
+    for (const node of this.nodes.values()) {
+      if (node.id === this.edgeDrawFromNode)
+        continue;
+      for (const side of sides) {
+        const pos = this.getHandlePosition(node, side);
+        const dist = Math.sqrt((canvasX - pos.x) ** 2 + (canvasY - pos.y) ** 2);
+        if (dist < threshold && (!best || dist < best.dist)) {
+          best = { nodeId: node.id, side, dist };
+        }
+      }
+    }
+    if (best)
+      return { nodeId: best.nodeId, side: best.side };
+    for (const node of this.nodes.values()) {
+      if (node.id === this.edgeDrawFromNode)
+        continue;
+      if (canvasX >= node.x && canvasX <= node.x + node.width && canvasY >= node.y && canvasY <= node.y + node.height) {
+        const distances = sides.map((side) => {
+          const pos = this.getHandlePosition(node, side);
+          return { side, dist: Math.sqrt((canvasX - pos.x) ** 2 + (canvasY - pos.y) ** 2) };
+        });
+        distances.sort((a, b) => a.dist - b.dist);
+        return { nodeId: node.id, side: distances[0].side };
+      }
+    }
+    return null;
+  }
+  showEdgeContextMenu(edgeId, e) {
+    const menu = new import_obsidian.Menu();
+    menu.addItem((item) => {
+      item.setTitle("Delete connection").setIcon("trash-2").onClick(() => {
+        this.deleteEdge(edgeId);
+      });
+    });
+    menu.showAtMouseEvent(e);
+  }
+  deleteEdge(edgeId) {
+    this.edges.delete(edgeId);
+    this.renderAllEdges();
+    this.triggerSave();
   }
   animateTo(targetScale, targetPanX, targetPanY) {
     const startScale = this.scale;
@@ -1239,6 +1376,19 @@ ${msg.content}
       this.renderLinkContent(node, content);
     } else {
       this.renderCardContent(node, content);
+    }
+    const sides = ["top", "right", "bottom", "left"];
+    for (const side of sides) {
+      const handle = el.createDiv({ cls: `rabbitmap-connection-handle rabbitmap-handle-${side}` });
+      handle.setAttribute("data-node-id", node.id);
+      handle.setAttribute("data-side", side);
+      handle.addEventListener("mousedown", (e) => {
+        if (e.button !== 0)
+          return;
+        e.stopPropagation();
+        e.preventDefault();
+        this.startEdgeDrawing(node.id, side, e);
+      });
     }
     const resizeHandle = el.createDiv({ cls: "rabbitmap-resize-handle" });
     resizeHandle.addEventListener("mousedown", (e) => {

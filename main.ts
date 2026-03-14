@@ -179,6 +179,12 @@ class RabbitMapView extends TextFileView {
 	private edges: Map<string, Edge> = new Map();
 	private edgesContainer: SVGSVGElement;
 
+	// Edge drawing state
+	private isDrawingEdge = false;
+	private edgeDrawFromNode: string | null = null;
+	private edgeDrawFromSide: "top" | "right" | "bottom" | "left" | null = null;
+	private edgeDrawTempLine: SVGLineElement | null = null;
+
 	// Plugin reference
 	plugin: RabbitMapPlugin;
 
@@ -605,6 +611,12 @@ class RabbitMapView extends TextFileView {
 
 				// Update selection based on intersection
 				this.updateSelectionFromBox(left, top, width, height);
+			} else if (this.isDrawingEdge && this.edgeDrawTempLine) {
+				const rect = this.canvas.getBoundingClientRect();
+				const canvasX = (e.clientX - rect.left - this.panX) / this.scale;
+				const canvasY = (e.clientY - rect.top - this.panY) / this.scale;
+				this.edgeDrawTempLine.setAttribute("x2", String(canvasX));
+				this.edgeDrawTempLine.setAttribute("y2", String(canvasY));
 			} else if (this.draggedNode) {
 				const rect = this.canvas.getBoundingClientRect();
 				const mouseX = (e.clientX - rect.left - this.panX) / this.scale;
@@ -635,7 +647,34 @@ class RabbitMapView extends TextFileView {
 			}
 		});
 
-		document.addEventListener("mouseup", () => {
+		document.addEventListener("mouseup", (e) => {
+			// Edge drawing completion
+			if (this.isDrawingEdge) {
+				const targetInfo = this.findTargetHandle(e);
+				if (targetInfo && targetInfo.nodeId !== this.edgeDrawFromNode) {
+					// Check for duplicate edges
+					const duplicate = Array.from(this.edges.values()).some(
+						(edge) =>
+							(edge.from === this.edgeDrawFromNode && edge.to === targetInfo.nodeId) ||
+							(edge.from === targetInfo.nodeId && edge.to === this.edgeDrawFromNode)
+					);
+					if (!duplicate) {
+						this.addEdge(this.edgeDrawFromNode!, targetInfo.nodeId);
+						this.triggerSave();
+					}
+				}
+				// Cleanup
+				if (this.edgeDrawTempLine) {
+					this.edgeDrawTempLine.remove();
+					this.edgeDrawTempLine = null;
+				}
+				this.isDrawingEdge = false;
+				this.edgeDrawFromNode = null;
+				this.edgeDrawFromSide = null;
+				this.canvas.removeClass("drawing-edge");
+				return;
+			}
+
 			if (this.isPanning || this.draggedNode || this.resizingNode) {
 				this.triggerSave();
 			}
@@ -1416,7 +1455,28 @@ class RabbitMapView extends TextFileView {
 
 		const d = `M ${fromX} ${fromY} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${toX} ${toY}`;
 		path.setAttribute("d", d);
+
+		// Hit area (invisible, wider stroke for easier clicking)
+		const hitArea = document.createElementNS("http://www.w3.org/2000/svg", "path");
+		hitArea.setAttribute("d", d);
+		hitArea.setAttribute("class", "rabbitmap-edge-hitarea");
+		hitArea.setAttribute("data-edge-id", edge.id);
+		group.appendChild(hitArea);
 		group.appendChild(path);
+
+		// Edge hover and context menu
+		group.style.pointerEvents = "auto";
+		group.addEventListener("mouseenter", () => {
+			path.classList.add("rabbitmap-edge-hover");
+		});
+		group.addEventListener("mouseleave", () => {
+			path.classList.remove("rabbitmap-edge-hover");
+		});
+		group.addEventListener("contextmenu", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.showEdgeContextMenu(edge.id, e as MouseEvent);
+		});
 
 		// Calculate arrow direction from curve end tangent
 		// Tangent at t=1 for cubic bezier: 3*(P3-P2) = 3*(toX-cx2, toY-cy2)
@@ -1447,6 +1507,102 @@ class RabbitMapView extends TextFileView {
 
 	private updateEdges(): void {
 		this.renderAllEdges();
+	}
+
+	private getHandlePosition(node: CanvasNode, side: "top" | "right" | "bottom" | "left"): { x: number; y: number } {
+		switch (side) {
+			case "top": return { x: node.x + node.width / 2, y: node.y };
+			case "right": return { x: node.x + node.width, y: node.y + node.height / 2 };
+			case "bottom": return { x: node.x + node.width / 2, y: node.y + node.height };
+			case "left": return { x: node.x, y: node.y + node.height / 2 };
+		}
+	}
+
+	private startEdgeDrawing(nodeId: string, side: "top" | "right" | "bottom" | "left", e: MouseEvent): void {
+		this.isDrawingEdge = true;
+		this.edgeDrawFromNode = nodeId;
+		this.edgeDrawFromSide = side;
+		this.canvas.addClass("drawing-edge");
+
+		const node = this.nodes.get(nodeId);
+		if (!node) return;
+		const anchor = this.getHandlePosition(node, side);
+
+		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line.setAttribute("x1", String(anchor.x));
+		line.setAttribute("y1", String(anchor.y));
+		line.setAttribute("x2", String(anchor.x));
+		line.setAttribute("y2", String(anchor.y));
+		line.setAttribute("class", "rabbitmap-edge-temp");
+		this.edgesContainer.appendChild(line);
+		this.edgeDrawTempLine = line;
+	}
+
+	private findTargetHandle(e: MouseEvent): { nodeId: string; side: string } | null {
+		// First try elementFromPoint (exact hit)
+		const el = document.elementFromPoint(e.clientX, e.clientY);
+		if (el) {
+			const handle = (el as HTMLElement).closest(".rabbitmap-connection-handle") as HTMLElement | null;
+			if (handle) {
+				const nodeId = handle.getAttribute("data-node-id");
+				const side = handle.getAttribute("data-side");
+				if (nodeId && side) return { nodeId, side };
+			}
+		}
+
+		// Fallback: proximity-based — find nearest handle within 30px
+		const rect = this.canvas.getBoundingClientRect();
+		const canvasX = (e.clientX - rect.left - this.panX) / this.scale;
+		const canvasY = (e.clientY - rect.top - this.panY) / this.scale;
+		const threshold = 30;
+		let best: { nodeId: string; side: string; dist: number } | null = null;
+		const sides: Array<"top" | "right" | "bottom" | "left"> = ["top", "right", "bottom", "left"];
+
+		for (const node of this.nodes.values()) {
+			if (node.id === this.edgeDrawFromNode) continue;
+			for (const side of sides) {
+				const pos = this.getHandlePosition(node, side);
+				const dist = Math.sqrt((canvasX - pos.x) ** 2 + (canvasY - pos.y) ** 2);
+				if (dist < threshold && (!best || dist < best.dist)) {
+					best = { nodeId: node.id, side, dist };
+				}
+			}
+		}
+		if (best) return { nodeId: best.nodeId, side: best.side };
+
+		// Last resort: check if cursor is over any node body
+		for (const node of this.nodes.values()) {
+			if (node.id === this.edgeDrawFromNode) continue;
+			if (canvasX >= node.x && canvasX <= node.x + node.width &&
+				canvasY >= node.y && canvasY <= node.y + node.height) {
+				// Pick the closest side
+				const distances = sides.map(side => {
+					const pos = this.getHandlePosition(node, side);
+					return { side, dist: Math.sqrt((canvasX - pos.x) ** 2 + (canvasY - pos.y) ** 2) };
+				});
+				distances.sort((a, b) => a.dist - b.dist);
+				return { nodeId: node.id, side: distances[0].side };
+			}
+		}
+		return null;
+	}
+
+	private showEdgeContextMenu(edgeId: string, e: MouseEvent): void {
+		const menu = new Menu();
+		menu.addItem((item) => {
+			item.setTitle("Delete connection")
+				.setIcon("trash-2")
+				.onClick(() => {
+					this.deleteEdge(edgeId);
+				});
+		});
+		menu.showAtMouseEvent(e);
+	}
+
+	private deleteEdge(edgeId: string): void {
+		this.edges.delete(edgeId);
+		this.renderAllEdges();
+		this.triggerSave();
 	}
 
 	private animateTo(targetScale: number, targetPanX: number, targetPanY: number): void {
@@ -1659,6 +1815,20 @@ class RabbitMapView extends TextFileView {
 			this.renderLinkContent(node, content);
 		} else {
 			this.renderCardContent(node, content);
+		}
+
+		// Connection handles
+		const sides: Array<"top" | "right" | "bottom" | "left"> = ["top", "right", "bottom", "left"];
+		for (const side of sides) {
+			const handle = el.createDiv({ cls: `rabbitmap-connection-handle rabbitmap-handle-${side}` });
+			handle.setAttribute("data-node-id", node.id);
+			handle.setAttribute("data-side", side);
+			handle.addEventListener("mousedown", (e) => {
+				if (e.button !== 0) return;
+				e.stopPropagation();
+				e.preventDefault();
+				this.startEdgeDrawing(node.id, side, e);
+			});
 		}
 
 		// Resize handle

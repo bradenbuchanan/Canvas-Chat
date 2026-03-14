@@ -99,7 +99,7 @@
 	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
 	display: flex;
 	flex-direction: column;
-	overflow: hidden;
+	overflow: visible;
 	border: 1px solid var(--background-modifier-border);
 }
 
@@ -112,6 +112,7 @@
 	cursor: move;
 	user-select: none;
 	border-bottom: 1px solid var(--background-modifier-border);
+	border-radius: 8px 8px 0 0;
 }
 
 .rabbitmap-node-title-container {
@@ -372,6 +373,7 @@
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+	border-radius: 0 0 8px 8px;
 }
 
 /* Resize handle */
@@ -921,6 +923,93 @@ h4.rabbitmap-prompt-section-title {
 
 .rabbitmap-arrow {
 	fill: #888;
+}
+
+/* Connection handles */
+.rabbitmap-connection-handle {
+	position: absolute;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: var(--interactive-accent);
+	opacity: 0;
+	transition: opacity 0.15s ease, transform 0.15s ease;
+	z-index: 10;
+	cursor: crosshair;
+	pointer-events: auto;
+}
+
+.rabbitmap-node:hover .rabbitmap-connection-handle {
+	opacity: 0.6;
+}
+
+.rabbitmap-connection-handle:hover {
+	opacity: 1;
+}
+
+.rabbitmap-handle-top {
+	top: -5px;
+	left: 50%;
+	transform: translateX(-50%);
+}
+.rabbitmap-handle-right {
+	right: -5px;
+	top: 50%;
+	transform: translateY(-50%);
+}
+.rabbitmap-handle-bottom {
+	bottom: -5px;
+	left: 50%;
+	transform: translateX(-50%);
+}
+.rabbitmap-handle-left {
+	left: -5px;
+	top: 50%;
+	transform: translateY(-50%);
+}
+
+.rabbitmap-handle-top:hover {
+	transform: translateX(-50%) scale(1.4);
+}
+.rabbitmap-handle-right:hover {
+	transform: translateY(-50%) scale(1.4);
+}
+.rabbitmap-handle-bottom:hover {
+	transform: translateX(-50%) scale(1.4);
+}
+.rabbitmap-handle-left:hover {
+	transform: translateY(-50%) scale(1.4);
+}
+
+/* Temporary edge line during drawing */
+.rabbitmap-edge-temp {
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	stroke-dasharray: 6 4;
+	pointer-events: none;
+}
+
+/* Edge hit area (invisible, wider for easy clicking) */
+.rabbitmap-edge-hitarea {
+	fill: none;
+	stroke: transparent;
+	stroke-width: 16;
+	pointer-events: stroke;
+	cursor: pointer;
+}
+
+/* Edge hover state */
+.rabbitmap-edge-hover {
+	stroke: var(--interactive-accent);
+	stroke-width: 3;
+}
+
+/* Canvas cursor during edge drawing */
+.rabbitmap-canvas.drawing-edge {
+	cursor: crosshair;
+}
+.rabbitmap-canvas.drawing-edge * {
+	cursor: crosshair;
 }
 
 /* OpenRouter Models Settings */
