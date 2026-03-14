@@ -309,6 +309,8 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
         minimapNode = this.minimapContent.createDiv({ cls: "rabbitmap-minimap-node" });
         if (node.type === "chat") {
           minimapNode.addClass("rabbitmap-minimap-node-chat");
+        } else if (node.type === "link") {
+          minimapNode.addClass("rabbitmap-minimap-node-link");
         }
         this.minimapNodes.set(nodeId, minimapNode);
       }
@@ -341,6 +343,9 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
     const addChatBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Add Chat" } });
     addChatBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
     addChatBtn.onclick = () => this.addChatAtCenter();
+    const addLinkBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Add Link" } });
+    addLinkBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
+    addLinkBtn.onclick = () => this.showAddLinkModal();
     toolbar.createDiv({ cls: "rabbitmap-toolbar-separator" });
     const settingsBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Settings" } });
     settingsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
@@ -469,6 +474,16 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
       if (e.code === "Space") {
         this.spacePressed = false;
         this.canvas.removeClass("pan-mode");
+      }
+    });
+    this.canvas.addEventListener("paste", (e) => {
+      var _a, _b;
+      if (this.isInputFocused())
+        return;
+      const text = (_b = (_a = e.clipboardData) == null ? void 0 : _a.getData("text/plain")) == null ? void 0 : _b.trim();
+      if (text && /^https?:\/\//i.test(text)) {
+        e.preventDefault();
+        this.addLinkAtCenter(text);
       }
     });
   }
@@ -1138,8 +1153,9 @@ ${msg.content}
     el.style.height = `${node.height}px`;
     const header = el.createDiv({ cls: "rabbitmap-node-header" });
     const titleContainer = header.createDiv({ cls: "rabbitmap-node-title-container" });
+    const defaultTitle = node.type === "chat" ? "Chat" : node.type === "link" ? node.linkTitle || "Link" : "Card";
     const titleSpan = titleContainer.createSpan({
-      text: node.title || (node.type === "chat" ? "Chat" : "Card"),
+      text: node.title || defaultTitle,
       cls: "rabbitmap-node-title"
     });
     const editTitleBtn = titleContainer.createEl("button", { cls: "rabbitmap-edit-title-btn" });
@@ -1209,9 +1225,18 @@ ${msg.content}
         this.showChatContextMenu(node.id, e);
       });
     }
+    if (node.type === "link") {
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.showLinkContextMenu(node.id, e);
+      });
+    }
     const content = el.createDiv({ cls: "rabbitmap-node-content" });
     if (node.type === "chat") {
       this.renderChatContent(node.id, content);
+    } else if (node.type === "link") {
+      this.renderLinkContent(node, content);
     } else {
       this.renderCardContent(node, content);
     }
@@ -1228,6 +1253,89 @@ ${msg.content}
       }
     });
     this.nodeElements.set(node.id, el);
+  }
+  renderLinkContent(node, container) {
+    container.addClass("rabbitmap-link-content");
+    if (node.linkImage) {
+      const imgWrap = container.createDiv({ cls: "rabbitmap-link-thumbnail" });
+      const img = imgWrap.createEl("img", { attr: { src: node.linkImage, alt: node.linkTitle || "" } });
+      img.addEventListener("error", () => {
+        imgWrap.remove();
+      });
+    }
+    const info = container.createDiv({ cls: "rabbitmap-link-info" });
+    const title = info.createDiv({
+      cls: "rabbitmap-link-title",
+      text: node.linkTitle || "Loading..."
+    });
+    if (node.url) {
+      let displayUrl = node.url;
+      try {
+        const parsed = new URL(node.url);
+        displayUrl = parsed.hostname + (parsed.pathname !== "/" ? parsed.pathname : "");
+      } catch (e) {
+      }
+      info.createDiv({
+        cls: "rabbitmap-link-url",
+        text: displayUrl
+      });
+    }
+    if (node.linkDescription) {
+      info.createDiv({
+        cls: "rabbitmap-link-description",
+        text: node.linkDescription
+      });
+    }
+    if (node.linkTitle === "Loading...") {
+      const spinner = info.createDiv({ cls: "rabbitmap-link-loading" });
+      spinner.createSpan({ text: "Fetching content..." });
+    }
+    const openBtn = container.createEl("button", {
+      cls: "rabbitmap-link-open-btn",
+      text: "Open Link"
+    });
+    openBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (node.url) {
+        window.open(node.url, "_blank");
+      }
+    });
+    container.addEventListener("wheel", (e) => {
+      e.stopPropagation();
+    });
+  }
+  showLinkContextMenu(nodeId, e) {
+    const node = this.nodes.get(nodeId);
+    if (!node)
+      return;
+    const menu = new import_obsidian.Menu();
+    menu.addItem((item) => {
+      item.setTitle("Open URL").setIcon("external-link").onClick(() => {
+        if (node.url)
+          window.open(node.url, "_blank");
+      });
+    });
+    menu.addItem((item) => {
+      item.setTitle("Refresh metadata").setIcon("refresh-cw").onClick(() => {
+        if (node.url) {
+          node.linkTitle = "Loading...";
+          node.linkDescription = "";
+          node.linkImage = void 0;
+          node.linkContent = void 0;
+          this.rerenderNode(nodeId);
+          this.fetchLinkMetadata(node.url, nodeId);
+        }
+      });
+    });
+    menu.addItem((item) => {
+      item.setTitle("Copy URL").setIcon("copy").onClick(() => {
+        if (node.url) {
+          navigator.clipboard.writeText(node.url);
+          new import_obsidian.Notice("URL copied to clipboard");
+        }
+      });
+    });
+    menu.showAtMouseEvent(e);
   }
   renderCardContent(node, container) {
     const textarea = container.createEl("textarea", {
@@ -1452,8 +1560,15 @@ ${msg.content}
         if (!input2)
           return false;
         let path = parsePath(input2);
-        if (!path || path.startsWith("http"))
+        if (!path)
           return false;
+        if (path.startsWith("http")) {
+          const canvasRect = this.canvas.getBoundingClientRect();
+          const x = (e.clientX - canvasRect.left - this.panX) / this.scale;
+          const y = (e.clientY - canvasRect.top - this.panY) / this.scale;
+          this.addLinkNode(path, x - 150, y - 100);
+          return true;
+        }
         let item = this.app.vault.getAbstractFileByPath(path);
         if (!item && !path.includes(".")) {
           item = this.app.vault.getAbstractFileByPath(path + ".md");
@@ -1985,6 +2100,363 @@ ${msg.content}
       type: "chat",
       content: ""
     });
+  }
+  showAddLinkModal() {
+    const modal = new import_obsidian.Modal(this.app);
+    modal.titleEl.setText("Add Link");
+    const input = modal.contentEl.createEl("input", {
+      cls: "rabbitmap-link-input",
+      attr: { type: "text", placeholder: "Paste a URL (e.g. https://...)" }
+    });
+    input.style.width = "100%";
+    input.style.padding = "8px";
+    input.style.marginBottom = "12px";
+    const btn = modal.contentEl.createEl("button", {
+      text: "Add to Canvas",
+      cls: "mod-cta"
+    });
+    btn.onclick = () => {
+      const url = input.value.trim();
+      if (url && /^https?:\/\//i.test(url)) {
+        this.addLinkAtCenter(url);
+        modal.close();
+      } else {
+        new import_obsidian.Notice("Please enter a valid URL");
+      }
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        btn.click();
+      }
+    });
+    modal.open();
+    input.focus();
+  }
+  addLinkAtCenter(url) {
+    const rect = this.canvas.getBoundingClientRect();
+    const centerX = (rect.width / 2 - this.panX) / this.scale;
+    const centerY = (rect.height / 2 - this.panY) / this.scale;
+    this.addLinkNode(url, centerX - 150, centerY - 100);
+  }
+  addLinkNode(url, x, y) {
+    const nodeId = this.generateId();
+    const node = {
+      id: nodeId,
+      x,
+      y,
+      width: 300,
+      height: 200,
+      type: "link",
+      content: "",
+      url,
+      linkTitle: "Loading...",
+      linkType: "webpage"
+    };
+    const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+    if (ytMatch) {
+      node.linkType = "youtube";
+      node.linkImage = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+    }
+    const twitterMatch = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
+    if (twitterMatch) {
+      node.linkType = "twitter";
+    }
+    this.addNode(node);
+    this.fetchLinkMetadata(url, nodeId);
+  }
+  async fetchLinkMetadata(url, nodeId) {
+    const node = this.nodes.get(nodeId);
+    if (!node)
+      return;
+    try {
+      if (node.linkType === "youtube") {
+        await this.fetchYouTubeMetadata(url, node);
+      } else if (node.linkType === "twitter") {
+        await this.fetchTwitterMetadata(url, node);
+      } else {
+        await this.fetchWebPageMetadata(url, node);
+      }
+    } catch (e) {
+      try {
+        node.linkTitle = new URL(url).hostname;
+      } catch (e2) {
+        node.linkTitle = url;
+      }
+      node.linkDescription = "Could not fetch content";
+    }
+    this.rerenderNode(nodeId);
+    this.triggerSave();
+  }
+  async fetchYouTubeMetadata(url, node) {
+    var _a;
+    try {
+      const resp = await (0, import_obsidian.requestUrl)({
+        url: `https://noembed.com/embed?url=${encodeURIComponent(url)}`
+      });
+      const data = resp.json;
+      node.linkTitle = data.title || "YouTube Video";
+      node.linkDescription = data.author_name ? `by ${data.author_name}` : "";
+    } catch (e) {
+      node.linkTitle = "YouTube Video";
+    }
+    try {
+      const pageResp = await (0, import_obsidian.requestUrl)({ url });
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(pageResp.text, "text/html");
+      const parts = [];
+      if (node.linkTitle && node.linkTitle !== "YouTube Video") {
+        parts.push(`Title: ${node.linkTitle}`);
+      }
+      if (node.linkDescription) {
+        parts.push(`Channel: ${node.linkDescription.replace(/^by /, "")}`);
+      }
+      const ogDesc = doc.querySelector('meta[property="og:description"]');
+      const descText = (_a = ogDesc == null ? void 0 : ogDesc.getAttribute("content")) == null ? void 0 : _a.trim();
+      if (descText) {
+        parts.push(`Description: ${descText}`);
+      }
+      const jsonLdContent = this.extractJsonLdContent(doc);
+      if (jsonLdContent) {
+        parts.push(jsonLdContent);
+      }
+      node.linkContent = parts.join("\n\n").slice(0, 1e4);
+    } catch (e) {
+    }
+  }
+  async fetchTwitterMetadata(url, node) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const match = url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/);
+    if (!match) {
+      node.linkTitle = "Tweet";
+      return;
+    }
+    const [, username, statusId] = match;
+    try {
+      const resp = await (0, import_obsidian.requestUrl)({
+        url: `https://api.fxtwitter.com/${username}/status/${statusId}`
+      });
+      const data = resp.json;
+      const tweet = data.tweet;
+      if (tweet) {
+        node.linkTitle = ((_a = tweet.author) == null ? void 0 : _a.name) ? `${tweet.author.name} (@${tweet.author.screen_name})` : `@${username}`;
+        node.linkDescription = tweet.text ? tweet.text.length > 200 ? tweet.text.slice(0, 200) + "\u2026" : tweet.text : "";
+        if ((_d = (_c = (_b = tweet.media) == null ? void 0 : _b.photos) == null ? void 0 : _c[0]) == null ? void 0 : _d.url) {
+          node.linkImage = tweet.media.photos[0].url;
+        } else if ((_e = tweet.author) == null ? void 0 : _e.avatar_url) {
+          node.linkImage = tweet.author.avatar_url;
+        }
+        const contentParts = [];
+        contentParts.push(`Tweet by ${((_f = tweet.author) == null ? void 0 : _f.name) || username} (@${((_g = tweet.author) == null ? void 0 : _g.screen_name) || username})`);
+        if (tweet.created_at) {
+          contentParts.push(`Posted: ${tweet.created_at}`);
+        }
+        if (tweet.text) {
+          contentParts.push(`
+${tweet.text}`);
+        }
+        if (tweet.replies !== void 0) {
+          contentParts.push(`
+Replies: ${tweet.replies} | Retweets: ${tweet.retweets} | Likes: ${tweet.likes}`);
+        }
+        if (tweet.replying_to) {
+          contentParts.push(`Replying to: @${tweet.replying_to}`);
+        }
+        node.linkContent = contentParts.join("\n").slice(0, 1e4);
+      } else {
+        node.linkTitle = `@${username}`;
+        node.linkDescription = "Could not load tweet";
+      }
+    } catch (e) {
+      try {
+        await this.fetchWebPageMetadata(url, node);
+      } catch (e2) {
+        node.linkTitle = `@${username}`;
+        node.linkDescription = "Could not load tweet";
+      }
+    }
+  }
+  async fetchWebPageMetadata(url, node) {
+    var _a, _b;
+    const resp = await (0, import_obsidian.requestUrl)({ url });
+    const html = resp.text;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    const ogTitle = doc.querySelector('meta[property="og:title"]');
+    const titleEl = doc.querySelector("title");
+    node.linkTitle = ((_a = ogTitle == null ? void 0 : ogTitle.getAttribute("content")) == null ? void 0 : _a.trim()) || ((_b = titleEl == null ? void 0 : titleEl.textContent) == null ? void 0 : _b.trim()) || new URL(url).hostname;
+    const descSources = [
+      doc.querySelector('meta[property="og:description"]'),
+      doc.querySelector('meta[name="description"]'),
+      doc.querySelector('meta[name="twitter:description"]')
+    ];
+    node.linkDescription = descSources.map((el) => {
+      var _a2;
+      return (_a2 = el == null ? void 0 : el.getAttribute("content")) == null ? void 0 : _a2.trim();
+    }).find((d) => d && d.length > 0) || "";
+    const ogImage = doc.querySelector('meta[property="og:image"]');
+    const imgContent = ogImage == null ? void 0 : ogImage.getAttribute("content");
+    if (imgContent) {
+      try {
+        node.linkImage = new URL(imgContent, url).href;
+      } catch (e) {
+        node.linkImage = imgContent;
+      }
+    }
+    node.linkContent = this.extractPageContent(doc, url);
+  }
+  extractPageContent(doc, url) {
+    const jsonLdContent = this.extractJsonLdContent(doc);
+    if (jsonLdContent && jsonLdContent.length > 200) {
+      return jsonLdContent.slice(0, 1e4);
+    }
+    const htmlContent = this.extractHtmlContent(doc);
+    if (jsonLdContent && jsonLdContent.length > 0) {
+      const combined = jsonLdContent + "\n\n" + htmlContent;
+      return combined.slice(0, 1e4);
+    }
+    if (htmlContent.length < 100) {
+      const metaFallback = this.extractMetaContent(doc);
+      if (metaFallback.length > htmlContent.length) {
+        return metaFallback.slice(0, 1e4);
+      }
+    }
+    return htmlContent.slice(0, 1e4);
+  }
+  extractJsonLdContent(doc) {
+    const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+    const parts = [];
+    scripts.forEach((script) => {
+      try {
+        const data = JSON.parse(script.textContent || "");
+        const items = Array.isArray(data) ? data : [data];
+        for (const item of items) {
+          if (item.articleBody) {
+            parts.push(item.articleBody);
+          }
+          if (item.text) {
+            parts.push(item.text);
+          }
+          if (item.description && !parts.includes(item.description)) {
+            parts.push(item.description);
+          }
+          if (item["@graph"] && Array.isArray(item["@graph"])) {
+            for (const graphItem of item["@graph"]) {
+              if (graphItem.articleBody)
+                parts.push(graphItem.articleBody);
+              if (graphItem.text)
+                parts.push(graphItem.text);
+              if (graphItem.description && !parts.includes(graphItem.description)) {
+                parts.push(graphItem.description);
+              }
+              if (graphItem.abstract)
+                parts.push(graphItem.abstract);
+            }
+          }
+          if (item.abstract) {
+            parts.push(item.abstract);
+          }
+        }
+      } catch (e) {
+      }
+    });
+    return parts.join("\n\n").trim();
+  }
+  extractHtmlContent(doc) {
+    const removeSelectors = [
+      "script",
+      "style",
+      "nav",
+      "footer",
+      "header",
+      "aside",
+      "iframe",
+      "noscript",
+      "[role='navigation']",
+      "[role='banner']",
+      "[role='contentinfo']",
+      ".sidebar",
+      ".comments",
+      ".comment",
+      ".related",
+      ".advertisement",
+      ".ad",
+      "form",
+      "[aria-hidden='true']",
+      ".social-share",
+      ".share-buttons",
+      ".cookie-banner",
+      ".popup",
+      ".modal"
+    ];
+    for (const sel of removeSelectors) {
+      try {
+        doc.querySelectorAll(sel).forEach((el) => el.remove());
+      } catch (e) {
+      }
+    }
+    const contentSelectors = [
+      "article",
+      "[role='main']",
+      "main",
+      ".post-content",
+      ".entry-content",
+      ".article-body",
+      ".article-content",
+      ".story-body",
+      "#content",
+      ".content",
+      "body"
+    ];
+    let contentEl = null;
+    for (const sel of contentSelectors) {
+      contentEl = doc.querySelector(sel);
+      if (contentEl)
+        break;
+    }
+    if (!contentEl)
+      return "";
+    const paragraphs = [];
+    const pElements = contentEl.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td");
+    if (pElements.length > 0) {
+      pElements.forEach((el) => {
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (text.length > 0) {
+          paragraphs.push(text);
+        }
+      });
+      return paragraphs.join("\n\n").trim();
+    }
+    return (contentEl.textContent || "").replace(/\s+/g, " ").trim();
+  }
+  extractMetaContent(doc) {
+    var _a;
+    const metaSelectors = [
+      'meta[property="og:description"]',
+      'meta[name="description"]',
+      'meta[name="twitter:description"]',
+      'meta[name="abstract"]',
+      // Academic papers
+      'meta[name="citation_abstract"]'
+      // Scholar/academic
+    ];
+    const parts = [];
+    for (const sel of metaSelectors) {
+      const el = doc.querySelector(sel);
+      const content = (_a = el == null ? void 0 : el.getAttribute("content")) == null ? void 0 : _a.trim();
+      if (content && !parts.includes(content)) {
+        parts.push(content);
+      }
+    }
+    return parts.join("\n\n").trim();
+  }
+  rerenderNode(nodeId) {
+    const el = this.nodeElements.get(nodeId);
+    const node = this.nodes.get(nodeId);
+    if (!el || !node)
+      return;
+    el.remove();
+    this.nodeElements.delete(nodeId);
+    this.renderNode(node);
   }
   async onClose() {
     this.triggerSave();

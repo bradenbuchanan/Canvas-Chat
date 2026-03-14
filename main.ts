@@ -10,6 +10,7 @@ import {
 	Setting,
 	MarkdownRenderer,
 	Component,
+	requestUrl,
 } from "obsidian";
 
 const VIEW_TYPE_RABBITMAP = "rabbitmap-canvas";
@@ -21,9 +22,15 @@ interface CanvasNode {
 	y: number;
 	width: number;
 	height: number;
-	type: "card" | "chat";
+	type: "card" | "chat" | "link";
 	content: string;
 	title?: string;
+	url?: string;
+	linkTitle?: string;
+	linkDescription?: string;
+	linkImage?: string;
+	linkContent?: string;
+	linkType?: "webpage" | "youtube" | "twitter" | "obsidian";
 }
 
 interface ChatMessage {
@@ -453,6 +460,8 @@ class RabbitMapView extends TextFileView {
 				minimapNode = this.minimapContent.createDiv({ cls: "rabbitmap-minimap-node" });
 				if (node.type === "chat") {
 					minimapNode.addClass("rabbitmap-minimap-node-chat");
+				} else if (node.type === "link") {
+					minimapNode.addClass("rabbitmap-minimap-node-link");
 				}
 				this.minimapNodes.set(nodeId, minimapNode);
 			}
@@ -495,6 +504,10 @@ class RabbitMapView extends TextFileView {
 		const addChatBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Add Chat" } });
 		addChatBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
 		addChatBtn.onclick = () => this.addChatAtCenter();
+
+		const addLinkBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Add Link" } });
+		addLinkBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
+		addLinkBtn.onclick = () => this.showAddLinkModal();
 
 		// Separator
 		toolbar.createDiv({ cls: "rabbitmap-toolbar-separator" });
@@ -661,6 +674,16 @@ class RabbitMapView extends TextFileView {
 			if (e.code === "Space") {
 				this.spacePressed = false;
 				this.canvas.removeClass("pan-mode");
+			}
+		});
+
+		// Paste handler for URLs
+		this.canvas.addEventListener("paste", (e) => {
+			if (this.isInputFocused()) return;
+			const text = e.clipboardData?.getData("text/plain")?.trim();
+			if (text && /^https?:\/\//i.test(text)) {
+				e.preventDefault();
+				this.addLinkAtCenter(text);
 			}
 		});
 	}
@@ -1518,8 +1541,9 @@ class RabbitMapView extends TextFileView {
 		const header = el.createDiv({ cls: "rabbitmap-node-header" });
 
 		const titleContainer = header.createDiv({ cls: "rabbitmap-node-title-container" });
+		const defaultTitle = node.type === "chat" ? "Chat" : node.type === "link" ? (node.linkTitle || "Link") : "Card";
 		const titleSpan = titleContainer.createSpan({
-			text: node.title || (node.type === "chat" ? "Chat" : "Card"),
+			text: node.title || defaultTitle,
 			cls: "rabbitmap-node-title"
 		});
 
@@ -1617,11 +1641,22 @@ class RabbitMapView extends TextFileView {
 			});
 		}
 
+		// Right-click context menu for link nodes
+		if (node.type === "link") {
+			el.addEventListener("contextmenu", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.showLinkContextMenu(node.id, e);
+			});
+		}
+
 		// Content area
 		const content = el.createDiv({ cls: "rabbitmap-node-content" });
 
 		if (node.type === "chat") {
 			this.renderChatContent(node.id, content);
+		} else if (node.type === "link") {
+			this.renderLinkContent(node, content);
 		} else {
 			this.renderCardContent(node, content);
 		}
@@ -1641,6 +1676,114 @@ class RabbitMapView extends TextFileView {
 		});
 
 		this.nodeElements.set(node.id, el);
+	}
+
+	private renderLinkContent(node: CanvasNode, container: HTMLElement): void {
+		container.addClass("rabbitmap-link-content");
+
+		// Thumbnail / image
+		if (node.linkImage) {
+			const imgWrap = container.createDiv({ cls: "rabbitmap-link-thumbnail" });
+			const img = imgWrap.createEl("img", { attr: { src: node.linkImage, alt: node.linkTitle || "" } });
+			img.addEventListener("error", () => {
+				imgWrap.remove();
+			});
+		}
+
+		const info = container.createDiv({ cls: "rabbitmap-link-info" });
+
+		// Title
+		const title = info.createDiv({
+			cls: "rabbitmap-link-title",
+			text: node.linkTitle || "Loading...",
+		});
+
+		// URL
+		if (node.url) {
+			let displayUrl = node.url;
+			try {
+				const parsed = new URL(node.url);
+				displayUrl = parsed.hostname + (parsed.pathname !== "/" ? parsed.pathname : "");
+			} catch {}
+			info.createDiv({
+				cls: "rabbitmap-link-url",
+				text: displayUrl,
+			});
+		}
+
+		// Description
+		if (node.linkDescription) {
+			info.createDiv({
+				cls: "rabbitmap-link-description",
+				text: node.linkDescription,
+			});
+		}
+
+		// Loading state
+		if (node.linkTitle === "Loading...") {
+			const spinner = info.createDiv({ cls: "rabbitmap-link-loading" });
+			spinner.createSpan({ text: "Fetching content..." });
+		}
+
+		// Open button
+		const openBtn = container.createEl("button", {
+			cls: "rabbitmap-link-open-btn",
+			text: "Open Link",
+		});
+		openBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			if (node.url) {
+				window.open(node.url, "_blank");
+			}
+		});
+
+		// Prevent wheel events from bubbling
+		container.addEventListener("wheel", (e) => {
+			e.stopPropagation();
+		});
+	}
+
+	private showLinkContextMenu(nodeId: string, e: MouseEvent): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) return;
+
+		const menu = new Menu();
+
+		menu.addItem((item) => {
+			item.setTitle("Open URL")
+				.setIcon("external-link")
+				.onClick(() => {
+					if (node.url) window.open(node.url, "_blank");
+				});
+		});
+
+		menu.addItem((item) => {
+			item.setTitle("Refresh metadata")
+				.setIcon("refresh-cw")
+				.onClick(() => {
+					if (node.url) {
+						node.linkTitle = "Loading...";
+						node.linkDescription = "";
+						node.linkImage = undefined;
+						node.linkContent = undefined;
+						this.rerenderNode(nodeId);
+						this.fetchLinkMetadata(node.url, nodeId);
+					}
+				});
+		});
+
+		menu.addItem((item) => {
+			item.setTitle("Copy URL")
+				.setIcon("copy")
+				.onClick(() => {
+					if (node.url) {
+						navigator.clipboard.writeText(node.url);
+						new Notice("URL copied to clipboard");
+					}
+				});
+		});
+
+		menu.showAtMouseEvent(e);
 	}
 
 	private renderCardContent(node: CanvasNode, container: HTMLElement): void {
@@ -1925,7 +2068,16 @@ class RabbitMapView extends TextFileView {
 				if (!input) return false;
 
 				let path = parsePath(input);
-				if (!path || path.startsWith("http")) return false;
+				if (!path) return false;
+
+				// Handle HTTP URLs by creating a link node
+				if (path.startsWith("http")) {
+					const canvasRect = this.canvas.getBoundingClientRect();
+					const x = (e.clientX - canvasRect.left - this.panX) / this.scale;
+					const y = (e.clientY - canvasRect.top - this.panY) / this.scale;
+					this.addLinkNode(path, x - 150, y - 100);
+					return true;
+				}
 
 				// Try to find the file or folder
 				let item = this.app.vault.getAbstractFileByPath(path);
@@ -2554,6 +2706,420 @@ class RabbitMapView extends TextFileView {
 			type: "chat",
 			content: "",
 		});
+	}
+
+	private showAddLinkModal(): void {
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Add Link");
+		const input = modal.contentEl.createEl("input", {
+			cls: "rabbitmap-link-input",
+			attr: { type: "text", placeholder: "Paste a URL (e.g. https://...)" },
+		});
+		input.style.width = "100%";
+		input.style.padding = "8px";
+		input.style.marginBottom = "12px";
+
+		const btn = modal.contentEl.createEl("button", {
+			text: "Add to Canvas",
+			cls: "mod-cta",
+		});
+		btn.onclick = () => {
+			const url = input.value.trim();
+			if (url && /^https?:\/\//i.test(url)) {
+				this.addLinkAtCenter(url);
+				modal.close();
+			} else {
+				new Notice("Please enter a valid URL");
+			}
+		};
+
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				btn.click();
+			}
+		});
+
+		modal.open();
+		input.focus();
+	}
+
+	private addLinkAtCenter(url: string): void {
+		const rect = this.canvas.getBoundingClientRect();
+		const centerX = (rect.width / 2 - this.panX) / this.scale;
+		const centerY = (rect.height / 2 - this.panY) / this.scale;
+		this.addLinkNode(url, centerX - 150, centerY - 100);
+	}
+
+	private addLinkNode(url: string, x: number, y: number): void {
+		const nodeId = this.generateId();
+		const node: CanvasNode = {
+			id: nodeId,
+			x,
+			y,
+			width: 300,
+			height: 200,
+			type: "link",
+			content: "",
+			url,
+			linkTitle: "Loading...",
+			linkType: "webpage",
+		};
+
+		// Detect YouTube
+		const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+		if (ytMatch) {
+			node.linkType = "youtube";
+			node.linkImage = `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+		}
+
+		// Detect Twitter/X
+		const twitterMatch = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
+		if (twitterMatch) {
+			node.linkType = "twitter";
+		}
+
+		this.addNode(node);
+		this.fetchLinkMetadata(url, nodeId);
+	}
+
+	private async fetchLinkMetadata(url: string, nodeId: string): Promise<void> {
+		const node = this.nodes.get(nodeId);
+		if (!node) return;
+
+		try {
+			if (node.linkType === "youtube") {
+				await this.fetchYouTubeMetadata(url, node);
+			} else if (node.linkType === "twitter") {
+				await this.fetchTwitterMetadata(url, node);
+			} else {
+				await this.fetchWebPageMetadata(url, node);
+			}
+		} catch (e) {
+			// Fallback: show URL only
+			try {
+				node.linkTitle = new URL(url).hostname;
+			} catch {
+				node.linkTitle = url;
+			}
+			node.linkDescription = "Could not fetch content";
+		}
+
+		this.rerenderNode(nodeId);
+		this.triggerSave();
+	}
+
+	private async fetchYouTubeMetadata(url: string, node: CanvasNode): Promise<void> {
+		try {
+			const resp = await requestUrl({
+				url: `https://noembed.com/embed?url=${encodeURIComponent(url)}`,
+			});
+			const data = resp.json;
+			node.linkTitle = data.title || "YouTube Video";
+			node.linkDescription = data.author_name ? `by ${data.author_name}` : "";
+		} catch {
+			node.linkTitle = "YouTube Video";
+		}
+
+		// Fetch page HTML to extract video description for LLM context
+		try {
+			const pageResp = await requestUrl({ url });
+			const parser = new DOMParser();
+			const doc = parser.parseFromString(pageResp.text, "text/html");
+
+			// YouTube puts the description in og:description and also in JSON-LD
+			const parts: string[] = [];
+
+			// Title context
+			if (node.linkTitle && node.linkTitle !== "YouTube Video") {
+				parts.push(`Title: ${node.linkTitle}`);
+			}
+			if (node.linkDescription) {
+				parts.push(`Channel: ${node.linkDescription.replace(/^by /, "")}`);
+			}
+
+			// og:description often has a truncated video description
+			const ogDesc = doc.querySelector('meta[property="og:description"]');
+			const descText = ogDesc?.getAttribute("content")?.trim();
+			if (descText) {
+				parts.push(`Description: ${descText}`);
+			}
+
+			// JSON-LD can have richer data
+			const jsonLdContent = this.extractJsonLdContent(doc);
+			if (jsonLdContent) {
+				parts.push(jsonLdContent);
+			}
+
+			node.linkContent = parts.join("\n\n").slice(0, 10000);
+		} catch {
+			// Page fetch failed; linkContent stays empty, which is fine
+		}
+	}
+
+	private async fetchTwitterMetadata(url: string, node: CanvasNode): Promise<void> {
+		// Use fxtwitter API which returns rich tweet data as JSON
+		const match = url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/);
+		if (!match) {
+			node.linkTitle = "Tweet";
+			return;
+		}
+
+		const [, username, statusId] = match;
+
+		try {
+			const resp = await requestUrl({
+				url: `https://api.fxtwitter.com/${username}/status/${statusId}`,
+			});
+			const data = resp.json;
+			const tweet = data.tweet;
+
+			if (tweet) {
+				// Title: author name and handle
+				node.linkTitle = tweet.author?.name
+					? `${tweet.author.name} (@${tweet.author.screen_name})`
+					: `@${username}`;
+
+				// Description: tweet text (truncated for display)
+				node.linkDescription = tweet.text
+					? (tweet.text.length > 200 ? tweet.text.slice(0, 200) + "…" : tweet.text)
+					: "";
+
+				// Image: author avatar or media
+				if (tweet.media?.photos?.[0]?.url) {
+					node.linkImage = tweet.media.photos[0].url;
+				} else if (tweet.author?.avatar_url) {
+					node.linkImage = tweet.author.avatar_url;
+				}
+
+				// Full content for LLM context
+				const contentParts: string[] = [];
+				contentParts.push(`Tweet by ${tweet.author?.name || username} (@${tweet.author?.screen_name || username})`);
+				if (tweet.created_at) {
+					contentParts.push(`Posted: ${tweet.created_at}`);
+				}
+				if (tweet.text) {
+					contentParts.push(`\n${tweet.text}`);
+				}
+				if (tweet.replies !== undefined) {
+					contentParts.push(`\nReplies: ${tweet.replies} | Retweets: ${tweet.retweets} | Likes: ${tweet.likes}`);
+				}
+				if (tweet.replying_to) {
+					contentParts.push(`Replying to: @${tweet.replying_to}`);
+				}
+
+				node.linkContent = contentParts.join("\n").slice(0, 10000);
+			} else {
+				node.linkTitle = `@${username}`;
+				node.linkDescription = "Could not load tweet";
+			}
+		} catch {
+			// Fallback: try generic web fetch
+			try {
+				await this.fetchWebPageMetadata(url, node);
+			} catch {
+				node.linkTitle = `@${username}`;
+				node.linkDescription = "Could not load tweet";
+			}
+		}
+	}
+
+	private async fetchWebPageMetadata(url: string, node: CanvasNode): Promise<void> {
+		const resp = await requestUrl({ url });
+		const html = resp.text;
+
+		// Parse with DOMParser
+		const parser = new DOMParser();
+		const doc = parser.parseFromString(html, "text/html");
+
+		// Title — prefer og:title, fall back to <title>
+		const ogTitle = doc.querySelector('meta[property="og:title"]');
+		const titleEl = doc.querySelector("title");
+		node.linkTitle = ogTitle?.getAttribute("content")?.trim()
+			|| titleEl?.textContent?.trim()
+			|| new URL(url).hostname;
+
+		// Meta description — check multiple sources
+		const descSources = [
+			doc.querySelector('meta[property="og:description"]'),
+			doc.querySelector('meta[name="description"]'),
+			doc.querySelector('meta[name="twitter:description"]'),
+		];
+		node.linkDescription = descSources
+			.map(el => el?.getAttribute("content")?.trim())
+			.find(d => d && d.length > 0) || "";
+
+		// OG image
+		const ogImage = doc.querySelector('meta[property="og:image"]');
+		const imgContent = ogImage?.getAttribute("content");
+		if (imgContent) {
+			try {
+				node.linkImage = new URL(imgContent, url).href;
+			} catch {
+				node.linkImage = imgContent;
+			}
+		}
+
+		// --- Extract rich content via multiple strategies ---
+		node.linkContent = this.extractPageContent(doc, url);
+	}
+
+	private extractPageContent(doc: Document, url: string): string {
+		// Strategy 1: JSON-LD structured data (best for Twitter/X, news, blogs)
+		const jsonLdContent = this.extractJsonLdContent(doc);
+		if (jsonLdContent && jsonLdContent.length > 200) {
+			return jsonLdContent.slice(0, 10000);
+		}
+
+		// Strategy 2: Enhanced HTML extraction
+		const htmlContent = this.extractHtmlContent(doc);
+
+		// If JSON-LD had something short, prepend it to HTML content
+		if (jsonLdContent && jsonLdContent.length > 0) {
+			const combined = jsonLdContent + "\n\n" + htmlContent;
+			return combined.slice(0, 10000);
+		}
+
+		// Strategy 3: Fall back to meta description if HTML extraction is too thin
+		if (htmlContent.length < 100) {
+			const metaFallback = this.extractMetaContent(doc);
+			if (metaFallback.length > htmlContent.length) {
+				return metaFallback.slice(0, 10000);
+			}
+		}
+
+		return htmlContent.slice(0, 10000);
+	}
+
+	private extractJsonLdContent(doc: Document): string {
+		const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+		const parts: string[] = [];
+
+		scripts.forEach(script => {
+			try {
+				const data = JSON.parse(script.textContent || "");
+				const items = Array.isArray(data) ? data : [data];
+				for (const item of items) {
+					// Extract article/post body text
+					if (item.articleBody) {
+						parts.push(item.articleBody);
+					}
+					if (item.text) {
+						parts.push(item.text);
+					}
+					if (item.description && !parts.includes(item.description)) {
+						parts.push(item.description);
+					}
+					// Handle nested @graph structure (common in WordPress, news sites)
+					if (item["@graph"] && Array.isArray(item["@graph"])) {
+						for (const graphItem of item["@graph"]) {
+							if (graphItem.articleBody) parts.push(graphItem.articleBody);
+							if (graphItem.text) parts.push(graphItem.text);
+							if (graphItem.description && !parts.includes(graphItem.description)) {
+								parts.push(graphItem.description);
+							}
+							if (graphItem.abstract) parts.push(graphItem.abstract);
+						}
+					}
+					// Academic papers
+					if (item.abstract) {
+						parts.push(item.abstract);
+					}
+				}
+			} catch {
+				// Invalid JSON-LD, skip
+			}
+		});
+
+		return parts.join("\n\n").trim();
+	}
+
+	private extractHtmlContent(doc: Document): string {
+		// Remove non-content elements
+		const removeSelectors = [
+			"script", "style", "nav", "footer", "header", "aside", "iframe", "noscript",
+			"[role='navigation']", "[role='banner']", "[role='contentinfo']",
+			".sidebar", ".comments", ".comment", ".related", ".advertisement", ".ad",
+			"form", "[aria-hidden='true']", ".social-share", ".share-buttons",
+			".cookie-banner", ".popup", ".modal",
+		];
+		for (const sel of removeSelectors) {
+			try {
+				doc.querySelectorAll(sel).forEach(el => el.remove());
+			} catch {
+				// Invalid selector in this context, skip
+			}
+		}
+
+		// Try progressively broader content selectors
+		const contentSelectors = [
+			"article",
+			"[role='main']",
+			"main",
+			".post-content",
+			".entry-content",
+			".article-body",
+			".article-content",
+			".story-body",
+			"#content",
+			".content",
+			"body",
+		];
+
+		let contentEl: Element | null = null;
+		for (const sel of contentSelectors) {
+			contentEl = doc.querySelector(sel);
+			if (contentEl) break;
+		}
+
+		if (!contentEl) return "";
+
+		// Extract text preserving paragraph structure
+		const paragraphs: string[] = [];
+		const pElements = contentEl.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td");
+
+		if (pElements.length > 0) {
+			pElements.forEach(el => {
+				const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+				if (text.length > 0) {
+					paragraphs.push(text);
+				}
+			});
+			return paragraphs.join("\n\n").trim();
+		}
+
+		// Fallback: raw textContent if no paragraph elements found
+		return (contentEl.textContent || "").replace(/\s+/g, " ").trim();
+	}
+
+	private extractMetaContent(doc: Document): string {
+		const metaSelectors = [
+			'meta[property="og:description"]',
+			'meta[name="description"]',
+			'meta[name="twitter:description"]',
+			'meta[name="abstract"]', // Academic papers
+			'meta[name="citation_abstract"]', // Scholar/academic
+		];
+
+		const parts: string[] = [];
+		for (const sel of metaSelectors) {
+			const el = doc.querySelector(sel);
+			const content = el?.getAttribute("content")?.trim();
+			if (content && !parts.includes(content)) {
+				parts.push(content);
+			}
+		}
+
+		return parts.join("\n\n").trim();
+	}
+
+	private rerenderNode(nodeId: string): void {
+		const el = this.nodeElements.get(nodeId);
+		const node = this.nodes.get(nodeId);
+		if (!el || !node) return;
+
+		el.remove();
+		this.nodeElements.delete(nodeId);
+		this.renderNode(node);
 	}
 
 	async onClose(): Promise<void> {
