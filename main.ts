@@ -22,9 +22,10 @@ interface CanvasNode {
 	y: number;
 	width: number;
 	height: number;
-	type: "card" | "chat" | "link";
+	type: "card" | "chat" | "link" | "note";
 	content: string;
 	title?: string;
+	filePath?: string;
 	url?: string;
 	linkTitle?: string;
 	linkDescription?: string;
@@ -468,6 +469,8 @@ class RabbitMapView extends TextFileView {
 					minimapNode.addClass("rabbitmap-minimap-node-chat");
 				} else if (node.type === "link") {
 					minimapNode.addClass("rabbitmap-minimap-node-link");
+				} else if (node.type === "note") {
+					minimapNode.addClass("rabbitmap-minimap-node-note");
 				}
 				this.minimapNodes.set(nodeId, minimapNode);
 			}
@@ -725,6 +728,65 @@ class RabbitMapView extends TextFileView {
 				this.addLinkAtCenter(text);
 			}
 		});
+
+		// Canvas-level drag and drop for importing notes
+		this.canvas.addEventListener("dragover", (e) => {
+			e.preventDefault();
+			this.canvas.addClass("rabbitmap-canvas-drag-over");
+		});
+
+		this.canvas.addEventListener("dragleave", (e) => {
+			e.preventDefault();
+			this.canvas.removeClass("rabbitmap-canvas-drag-over");
+		});
+
+		this.canvas.addEventListener("drop", async (e) => {
+			e.preventDefault();
+			this.canvas.removeClass("rabbitmap-canvas-drag-over");
+
+			const plainText = e.dataTransfer?.getData("text/plain") || "";
+			if (!plainText) return;
+
+			const canvasRect = this.canvas.getBoundingClientRect();
+			const dropX = (e.clientX - canvasRect.left - this.panX) / this.scale;
+			const dropY = (e.clientY - canvasRect.top - this.panY) / this.scale;
+
+			const lines = plainText.split("\n").map(l => l.trim()).filter(l => l);
+			let offsetIndex = 0;
+
+			for (const line of lines) {
+				const path = this.parsePath(line);
+				if (!path) continue;
+
+				// Skip HTTP URLs — those are handled by the paste handler
+				if (path.startsWith("http")) {
+					this.addLinkNode(path, dropX - 150 + offsetIndex * 30, dropY - 100 + offsetIndex * 30);
+					offsetIndex++;
+					continue;
+				}
+
+				// Try to resolve as file or folder
+				const item = this.resolveVaultItem(path);
+
+				if (item instanceof TFolder) {
+					// Add all markdown files from folder as note nodes
+					const mdFiles = this.getMdFilesFromFolder(item);
+					for (const file of mdFiles) {
+						try {
+							const content = await this.app.vault.read(file);
+							this.addNoteNode(file.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
+							offsetIndex++;
+						} catch {}
+					}
+				} else if (item instanceof TFile && item.extension === "md") {
+					try {
+						const content = await this.app.vault.read(item);
+						this.addNoteNode(item.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
+						offsetIndex++;
+					} catch {}
+				}
+			}
+		});
 	}
 
 	private updateSelectionFromBox(left: number, top: number, width: number, height: number): void {
@@ -816,7 +878,8 @@ class RabbitMapView extends TextFileView {
 	}
 
 	private zoom(delta: number): void {
-		const newScale = Math.min(Math.max(this.scale + delta, 0.5), 2);
+		const factor = Math.exp(delta);
+		const newScale = Math.min(Math.max(this.scale * factor, 0.1), 2);
 		this.scale = newScale;
 		this.updateTransform();
 		this.triggerSave();
@@ -828,7 +891,8 @@ class RabbitMapView extends TextFileView {
 		const mouseY = clientY - rect.top;
 
 		const oldScale = this.scale;
-		const newScale = Math.min(Math.max(this.scale + delta, 0.5), 2);
+		const factor = Math.exp(delta);
+		const newScale = Math.min(Math.max(this.scale * factor, 0.1), 2);
 
 		if (newScale !== oldScale) {
 			this.panX = mouseX - ((mouseX - this.panX) * newScale) / oldScale;
@@ -871,19 +935,32 @@ class RabbitMapView extends TextFileView {
 		const viewWidth = rect.width;
 		const viewHeight = rect.height;
 
+		// Ensure minimum effective content area so few nodes don't over-constrain panning
+		const minContentSize = 2000;
+		const effectiveWidth = Math.max(bounds.maxX - bounds.minX, minContentSize);
+		const effectiveHeight = Math.max(bounds.maxY - bounds.minY, minContentSize);
+		const centerX = (bounds.minX + bounds.maxX) / 2;
+		const centerY = (bounds.minY + bounds.maxY) / 2;
+		const effectiveBounds = {
+			minX: centerX - effectiveWidth / 2,
+			maxX: centerX + effectiveWidth / 2,
+			minY: centerY - effectiveHeight / 2,
+			maxY: centerY + effectiveHeight / 2,
+		};
+
 		// Allow content to go off-screen but keep at least 20% visible
 		const keepVisible = 0.2;
-		const contentWidth = (bounds.maxX - bounds.minX) * this.scale;
-		const contentHeight = (bounds.maxY - bounds.minY) * this.scale;
+		const contentWidth = (effectiveBounds.maxX - effectiveBounds.minX) * this.scale;
+		const contentHeight = (effectiveBounds.maxY - effectiveBounds.minY) * this.scale;
 
 		// Min visible amount
 		const minVisibleX = Math.min(contentWidth * keepVisible, 100);
 		const minVisibleY = Math.min(contentHeight * keepVisible, 100);
 
-		const contentLeft = bounds.minX * this.scale;
-		const contentRight = bounds.maxX * this.scale;
-		const contentTop = bounds.minY * this.scale;
-		const contentBottom = bounds.maxY * this.scale;
+		const contentLeft = effectiveBounds.minX * this.scale;
+		const contentRight = effectiveBounds.maxX * this.scale;
+		const contentTop = effectiveBounds.minY * this.scale;
+		const contentBottom = effectiveBounds.maxY * this.scale;
 
 		// Content can go mostly off-screen but not completely
 		const minPanX = minVisibleX - contentRight;
@@ -909,7 +986,7 @@ class RabbitMapView extends TextFileView {
 		const padding = 100;
 		const scaleX = viewWidth / (node.width + padding * 2);
 		const scaleY = viewHeight / (node.height + padding * 2);
-		const targetScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.5), 2);
+		const targetScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.1), 2);
 
 		// Center node in view
 		const nodeCenterX = node.x + node.width / 2;
@@ -1697,7 +1774,7 @@ class RabbitMapView extends TextFileView {
 		const header = el.createDiv({ cls: "rabbitmap-node-header" });
 
 		const titleContainer = header.createDiv({ cls: "rabbitmap-node-title-container" });
-		const defaultTitle = node.type === "chat" ? "Chat" : node.type === "link" ? (node.linkTitle || "Link") : "Card";
+		const defaultTitle = node.type === "chat" ? "Chat" : node.type === "link" ? (node.linkTitle || "Link") : node.type === "note" ? (node.title || "Note") : "Card";
 		const titleSpan = titleContainer.createSpan({
 			text: node.title || defaultTitle,
 			cls: "rabbitmap-node-title"
@@ -1806,6 +1883,15 @@ class RabbitMapView extends TextFileView {
 			});
 		}
 
+		// Right-click context menu for note nodes
+		if (node.type === "note") {
+			el.addEventListener("contextmenu", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.showNoteContextMenu(node.id, e);
+			});
+		}
+
 		// Content area
 		const content = el.createDiv({ cls: "rabbitmap-node-content" });
 
@@ -1813,6 +1899,8 @@ class RabbitMapView extends TextFileView {
 			this.renderChatContent(node.id, content);
 		} else if (node.type === "link") {
 			this.renderLinkContent(node, content);
+		} else if (node.type === "note") {
+			this.renderNoteContent(node, content);
 		} else {
 			this.renderCardContent(node, content);
 		}
@@ -1956,6 +2044,51 @@ class RabbitMapView extends TextFileView {
 		menu.showAtMouseEvent(e);
 	}
 
+	private showNoteContextMenu(nodeId: string, e: MouseEvent): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) return;
+
+		const menu = new Menu();
+
+		if (node.filePath) {
+			menu.addItem((item) => {
+				item.setTitle("Open in Obsidian")
+					.setIcon("file-text")
+					.onClick(() => {
+						this.app.workspace.openLinkText(node.filePath!, "", false);
+					});
+			});
+
+			menu.addItem((item) => {
+				item.setTitle("Refresh from file")
+					.setIcon("refresh-cw")
+					.onClick(async () => {
+						const file = this.app.vault.getAbstractFileByPath(node.filePath!);
+						if (file instanceof TFile) {
+							const content = await this.app.vault.read(file);
+							node.content = content;
+							this.rerenderNode(nodeId);
+							this.triggerSave();
+							new Notice("Note refreshed from file");
+						} else {
+							new Notice("Source file not found");
+						}
+					});
+			});
+		}
+
+		menu.addItem((item) => {
+			item.setTitle("Copy content")
+				.setIcon("copy")
+				.onClick(() => {
+					navigator.clipboard.writeText(node.content);
+					new Notice("Content copied to clipboard");
+				});
+		});
+
+		menu.showAtMouseEvent(e);
+	}
+
 	private renderCardContent(node: CanvasNode, container: HTMLElement): void {
 		const textarea = container.createEl("textarea", {
 			cls: "rabbitmap-card-textarea",
@@ -1968,6 +2101,37 @@ class RabbitMapView extends TextFileView {
 		});
 		// Prevent wheel events from bubbling to canvas
 		textarea.addEventListener("wheel", (e) => {
+			e.stopPropagation();
+		});
+	}
+
+	private renderNoteContent(node: CanvasNode, container: HTMLElement): void {
+		container.addClass("rabbitmap-note-content");
+
+		// Rendered markdown area
+		const markdownContainer = container.createDiv({ cls: "rabbitmap-note-markdown" });
+		MarkdownRenderer.render(
+			this.app,
+			node.content,
+			markdownContainer,
+			node.filePath || "",
+			new Component()
+		);
+
+		// Open in Obsidian button
+		if (node.filePath) {
+			const openBtn = container.createEl("button", {
+				cls: "rabbitmap-note-open-btn",
+				text: "Open in Obsidian",
+			});
+			openBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.app.workspace.openLinkText(node.filePath!, "", false);
+			});
+		}
+
+		// Prevent wheel events from bubbling to canvas
+		container.addEventListener("wheel", (e) => {
 			e.stopPropagation();
 		});
 	}
@@ -2950,6 +3114,119 @@ class RabbitMapView extends TextFileView {
 
 		this.addNode(node);
 		this.fetchLinkMetadata(url, nodeId);
+	}
+
+	private parsePath(input: string): string {
+		input = input.trim();
+
+		// Handle obsidian:// URL format
+		if (input.startsWith("obsidian://")) {
+			try {
+				const url = new URL(input);
+				const filePath = url.searchParams.get("file");
+				if (filePath) {
+					return decodeURIComponent(filePath);
+				}
+			} catch {}
+		}
+
+		// Handle URL encoding
+		try {
+			input = decodeURIComponent(input);
+		} catch {}
+
+		// Handle [[wikilink]] format
+		const wikiMatch = input.match(/^\[\[(.+?)\]\]$/);
+		if (wikiMatch) {
+			return wikiMatch[1];
+		}
+
+		// Handle [name](path) format
+		const mdMatch = input.match(/^\[.+?\]\((.+?)\)$/);
+		if (mdMatch) {
+			return mdMatch[1];
+		}
+
+		// Remove leading slash if present
+		if (input.startsWith("/")) {
+			input = input.slice(1);
+		}
+
+		return input;
+	}
+
+	private resolveVaultItem(path: string): TFile | TFolder | null {
+		let item = this.app.vault.getAbstractFileByPath(path);
+
+		// Try adding .md extension
+		if (!item && !path.includes(".")) {
+			item = this.app.vault.getAbstractFileByPath(path + ".md");
+		}
+
+		// Try to find by name in all files
+		if (!item) {
+			const allFiles = this.app.vault.getFiles();
+			const fileName = path.split("/").pop() || path;
+			const found = allFiles.find(f =>
+				f.path === path ||
+				f.name === fileName ||
+				f.basename === fileName ||
+				f.path.endsWith("/" + path)
+			);
+			if (found) return found;
+		}
+
+		// Try to find folder by name
+		if (!item && !path.includes(".")) {
+			const rootFolder = this.app.vault.getRoot();
+			const allFolders = this.getAllFolders(rootFolder);
+			const folderName = path.split("/").pop() || path;
+			const found = allFolders.find(f =>
+				f.path === path ||
+				f.name === folderName ||
+				f.path.endsWith("/" + path)
+			);
+			if (found) return found;
+		}
+
+		return item as TFile | TFolder | null;
+	}
+
+	private getAllFolders(folder: TFolder): TFolder[] {
+		const folders: TFolder[] = [folder];
+		for (const child of folder.children) {
+			if (child instanceof TFolder) {
+				folders.push(...this.getAllFolders(child));
+			}
+		}
+		return folders;
+	}
+
+	private getMdFilesFromFolder(folder: TFolder): TFile[] {
+		const files: TFile[] = [];
+		for (const child of folder.children) {
+			if (child instanceof TFile && child.extension === "md") {
+				files.push(child);
+			} else if (child instanceof TFolder) {
+				files.push(...this.getMdFilesFromFolder(child));
+			}
+		}
+		return files;
+	}
+
+	private addNoteNode(filePath: string, content: string, x: number, y: number): void {
+		const node: CanvasNode = {
+			id: this.generateId(),
+			x,
+			y,
+			width: 350,
+			height: 300,
+			type: "note",
+			content,
+			title: filePath.split("/").pop()?.replace(".md", "") || "Note",
+			filePath,
+		};
+		this.addNode(node);
 	}
 
 	private async fetchLinkMetadata(url: string, nodeId: string): Promise<void> {
