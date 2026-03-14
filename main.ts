@@ -156,6 +156,9 @@ class RabbitMapView extends TextFileView {
 	private resizeStartX = 0;
 	private resizeStartY = 0;
 
+	// Active context menu (prevent overlapping menus)
+	private activeMenu: Menu | null = null;
+
 	// Selection state
 	private selectedNodes: Set<string> = new Set();
 	private isSelecting = false;
@@ -999,6 +1002,12 @@ class RabbitMapView extends TextFileView {
 		this.animateTo(targetScale, targetPanX, targetPanY);
 	}
 
+	private showMenu(menu: Menu, e: MouseEvent): void {
+		this.activeMenu?.close();
+		this.activeMenu = menu;
+		menu.showAtMouseEvent(e);
+	}
+
 	private showChatContextMenu(nodeId: string, e: MouseEvent): void {
 		const menu = new Menu();
 
@@ -1018,7 +1027,7 @@ class RabbitMapView extends TextFileView {
 				});
 		});
 
-		menu.showAtMouseEvent(e);
+		this.showMenu(menu, e);
 	}
 
 	private branchChat(nodeId: string, upToMsgIndex?: number): void {
@@ -1673,7 +1682,7 @@ class RabbitMapView extends TextFileView {
 					this.deleteEdge(edgeId);
 				});
 		});
-		menu.showAtMouseEvent(e);
+		this.showMenu(menu, e);
 	}
 
 	private deleteEdge(edgeId: string): void {
@@ -2041,7 +2050,7 @@ class RabbitMapView extends TextFileView {
 				});
 		});
 
-		menu.showAtMouseEvent(e);
+		this.showMenu(menu, e);
 	}
 
 	private showNoteContextMenu(nodeId: string, e: MouseEvent): void {
@@ -2086,7 +2095,7 @@ class RabbitMapView extends TextFileView {
 				});
 		});
 
-		menu.showAtMouseEvent(e);
+		this.showMenu(menu, e);
 	}
 
 	private renderCardContent(node: CanvasNode, container: HTMLElement): void {
@@ -2894,7 +2903,7 @@ class RabbitMapView extends TextFileView {
 				});
 		});
 
-		menu.showAtMouseEvent(e);
+		this.showMenu(menu, e);
 	}
 
 	private async exportMessageToMd(nodeId: string, msgIndex: number, includeHistory: boolean): Promise<void> {
