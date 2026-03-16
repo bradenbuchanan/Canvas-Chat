@@ -449,6 +449,18 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
           const y = mouseY - this.dragOffsetY;
           this.updateNodePosition(this.draggedNode, x, y);
         }
+        const draggedNodeData = this.nodes.get(this.draggedNode);
+        if (draggedNodeData && draggedNodeData.type !== "chat") {
+          const dragCenterX = draggedNodeData.x + draggedNodeData.width / 2;
+          const dragCenterY = draggedNodeData.y + draggedNodeData.height / 2;
+          for (const [id, n] of this.nodes) {
+            const el = this.nodeElements.get(id);
+            if (!el || n.type !== "chat" || id === this.draggedNode)
+              continue;
+            const inside = dragCenterX >= n.x && dragCenterX <= n.x + n.width && dragCenterY >= n.y && dragCenterY <= n.y + n.height;
+            el.toggleClass("rabbitmap-drop-target", inside);
+          }
+        }
       } else if (this.resizingNode) {
         const deltaX = (e.clientX - this.resizeStartX) / this.scale;
         const deltaY = (e.clientY - this.resizeStartY) / this.scale;
@@ -481,6 +493,49 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
       }
       if (this.isPanning || this.draggedNode || this.resizingNode) {
         this.triggerSave();
+      }
+      if (this.draggedNode) {
+        const draggedNodeData = this.nodes.get(this.draggedNode);
+        if (draggedNodeData && draggedNodeData.type !== "chat") {
+          const dragCenterX = draggedNodeData.x + draggedNodeData.width / 2;
+          const dragCenterY = draggedNodeData.y + draggedNodeData.height / 2;
+          for (const [id, n] of this.nodes) {
+            if (n.type !== "chat" || id === this.draggedNode)
+              continue;
+            const inside = dragCenterX >= n.x && dragCenterX <= n.x + n.width && dragCenterY >= n.y && dragCenterY <= n.y + n.height;
+            if (inside) {
+              const chatState = this.chatStates.get(id);
+              if (chatState) {
+                if (!chatState.contextNodes)
+                  chatState.contextNodes = [];
+                if (!chatState.contextNodes.includes(this.draggedNode)) {
+                  chatState.contextNodes.push(this.draggedNode);
+                  this.chatStates.set(id, chatState);
+                  const hasEdge = Array.from(this.edges.values()).some(
+                    (edge) => edge.from === id && edge.to === this.draggedNode || edge.from === this.draggedNode && edge.to === id
+                  );
+                  if (!hasEdge) {
+                    this.addEdge(id, this.draggedNode);
+                  }
+                  const nodeEl = this.nodeElements.get(id);
+                  if (nodeEl) {
+                    const content = nodeEl.querySelector(".rabbitmap-node-content");
+                    if (content) {
+                      content.empty();
+                      this.renderChatContent(id, content);
+                    }
+                  }
+                  new import_obsidian.Notice("Added to chat context");
+                  this.triggerSave();
+                }
+              }
+              break;
+            }
+          }
+        }
+        for (const el of this.nodeElements.values()) {
+          el.removeClass("rabbitmap-drop-target");
+        }
       }
       this.isPanning = false;
       this.draggedNode = null;
@@ -743,6 +798,15 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
   }
   showChatContextMenu(nodeId, e) {
     const menu = new import_obsidian.Menu();
+    const connectedNodes = this.getConnectedNodes(nodeId);
+    if (connectedNodes.length > 0) {
+      menu.addItem((item) => {
+        item.setTitle("Analyze connections").setIcon("scan-search").onClick(() => {
+          this.analyzeConnections(nodeId);
+        });
+      });
+      menu.addSeparator();
+    }
     menu.addItem((item) => {
       item.setTitle("Branch").setIcon("git-branch").onClick(() => {
         this.branchChat(nodeId);
@@ -754,6 +818,31 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
       });
     });
     this.showMenu(menu, e);
+  }
+  analyzeConnections(nodeId) {
+    const connectedNodes = this.getConnectedNodes(nodeId);
+    if (connectedNodes.length === 0)
+      return;
+    const chatState = this.chatStates.get(nodeId);
+    if (!chatState)
+      return;
+    chatState.contextNodes = connectedNodes;
+    this.chatStates.set(nodeId, chatState);
+    const nodeEl = this.nodeElements.get(nodeId);
+    if (nodeEl) {
+      const content = nodeEl.querySelector(".rabbitmap-node-content");
+      if (content) {
+        content.empty();
+        this.renderChatContent(nodeId, content);
+      }
+    }
+    setTimeout(() => {
+      const input = nodeEl == null ? void 0 : nodeEl.querySelector(".rabbitmap-chat-input");
+      if (input)
+        input.focus();
+    }, 100);
+    this.triggerSave();
+    new import_obsidian.Notice(`Added ${connectedNodes.length} connected node(s) as context`);
   }
   branchChat(nodeId, upToMsgIndex) {
     const sourceNode = this.nodes.get(nodeId);
@@ -777,6 +866,7 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
       provider: sourceState.provider,
       model: sourceState.model,
       contextFiles: [...sourceState.contextFiles],
+      contextNodes: [...sourceState.contextNodes || []],
       systemPrompt: sourceState.systemPrompt,
       contextTemplate: sourceState.contextTemplate
     };
@@ -841,7 +931,8 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
     const msg = {
       role: "user",
       content: text,
-      contextFiles: chatState.contextFiles ? [...chatState.contextFiles] : []
+      contextFiles: chatState.contextFiles ? [...chatState.contextFiles] : [],
+      contextNodes: chatState.contextNodes ? [...chatState.contextNodes] : []
     };
     const messages = this.chatMessages.get(nodeId) || [];
     messages.push(msg);
@@ -886,6 +977,12 @@ var RabbitMapView = class extends import_obsidian.TextFileView {
       }
       if (contextParts.length > 0) {
         contextContent = "Context files:\n\n" + contextParts.join("\n\n");
+      }
+    }
+    if (chatState.contextNodes && chatState.contextNodes.length > 0) {
+      const nodeContent = this.getConnectedContent(chatState.contextNodes);
+      if (nodeContent) {
+        contextContent = contextContent ? contextContent + "\n\n" + nodeContent : nodeContent;
       }
     }
     try {
@@ -1031,6 +1128,7 @@ ${msg.content}
       provider: sourceState.provider,
       model: sourceState.model,
       contextFiles: [...sourceState.contextFiles],
+      contextNodes: [...sourceState.contextNodes || []],
       systemPrompt: sourceState.systemPrompt,
       contextTemplate: sourceState.contextTemplate
     };
@@ -1090,6 +1188,61 @@ ${msg.content}
     }
     return false;
   }
+  // --- Connection Analysis Utilities ---
+  getConnectedNodes(nodeId) {
+    const connected = /* @__PURE__ */ new Set();
+    for (const edge of this.edges.values()) {
+      if (edge.from === nodeId)
+        connected.add(edge.to);
+      if (edge.to === nodeId)
+        connected.add(edge.from);
+    }
+    return Array.from(connected);
+  }
+  getNodeContent(nodeId) {
+    const node = this.nodes.get(nodeId);
+    if (!node)
+      return "";
+    switch (node.type) {
+      case "card":
+        return `[Card: ${node.title || "Untitled"}]
+${node.content || ""}`;
+      case "link": {
+        const parts = [`[Link: ${node.linkTitle || node.url || "Untitled"}]`];
+        if (node.url)
+          parts.push(`URL: ${node.url}`);
+        if (node.linkDescription)
+          parts.push(node.linkDescription);
+        if (node.linkContent) {
+          const content = node.linkContent.length > 4e3 ? node.linkContent.slice(0, 4e3) + "\n... [truncated]" : node.linkContent;
+          parts.push(content);
+        }
+        return parts.join("\n");
+      }
+      case "note":
+        return `[Note: ${node.filePath || node.title || "Untitled"}]
+${node.content || ""}`;
+      case "chat": {
+        const messages = this.chatMessages.get(nodeId) || [];
+        const recent = messages.slice(-10);
+        let summary = `[Chat: ${node.title || "Chat"}]
+`;
+        summary += recent.map((m) => `${m.role}: ${m.content}`).join("\n");
+        if (summary.length > 4e3) {
+          summary = summary.slice(0, 4e3) + "\n... [truncated]";
+        }
+        return summary;
+      }
+      default:
+        return node.content || "";
+    }
+  }
+  getConnectedContent(nodeIds) {
+    const parts = nodeIds.map((id) => this.getNodeContent(id)).filter((content) => content.length > 0);
+    if (parts.length === 0)
+      return "";
+    return "Connected nodes:\n\n" + parts.join("\n\n---\n\n");
+  }
   addEdge(fromId, toId) {
     const edge = {
       id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -1098,6 +1251,31 @@ ${msg.content}
     };
     this.edges.set(edge.id, edge);
     this.renderEdge(edge);
+    this.addEdgeContext(fromId, toId);
+    this.addEdgeContext(toId, fromId);
+  }
+  addEdgeContext(chatNodeId, otherNodeId) {
+    const chatNode = this.nodes.get(chatNodeId);
+    if (!chatNode || chatNode.type !== "chat")
+      return;
+    const chatState = this.chatStates.get(chatNodeId);
+    if (!chatState)
+      return;
+    if (!chatState.contextNodes)
+      chatState.contextNodes = [];
+    if (!chatState.contextNodes.includes(otherNodeId)) {
+      chatState.contextNodes.push(otherNodeId);
+      this.chatStates.set(chatNodeId, chatState);
+      const nodeEl = this.nodeElements.get(chatNodeId);
+      if (nodeEl) {
+        const content = nodeEl.querySelector(".rabbitmap-node-content");
+        if (content) {
+          content.empty();
+          this.renderChatContent(chatNodeId, content);
+        }
+      }
+      this.triggerSave();
+    }
   }
   renderAllEdges() {
     this.edgesContainer.innerHTML = "";
@@ -1341,6 +1519,7 @@ ${msg.content}
           provider: defaultProvider.name,
           model: defaultProvider.models[0],
           contextFiles: [],
+          contextNodes: [],
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           contextTemplate: DEFAULT_CONTEXT_TEMPLATE
         });
@@ -1428,27 +1607,21 @@ ${msg.content}
       e.stopPropagation();
       this.zoomToNode(node.id);
     });
-    if (node.type === "chat") {
-      el.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.selectedNodes.size >= 2 && this.selectedNodes.has(node.id)) {
+        this.showMultiSelectContextMenu(e);
+        return;
+      }
+      if (node.type === "chat") {
         this.showChatContextMenu(node.id, e);
-      });
-    }
-    if (node.type === "link") {
-      el.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      } else if (node.type === "link") {
         this.showLinkContextMenu(node.id, e);
-      });
-    }
-    if (node.type === "note") {
-      el.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      } else if (node.type === "note") {
         this.showNoteContextMenu(node.id, e);
-      });
-    }
+      }
+    });
     const content = el.createDiv({ cls: "rabbitmap-node-content" });
     if (node.type === "chat") {
       this.renderChatContent(node.id, content);
@@ -1603,6 +1776,75 @@ ${msg.content}
     });
     this.showMenu(menu, e);
   }
+  showMultiSelectContextMenu(e) {
+    const menu = new import_obsidian.Menu();
+    menu.addItem((item) => {
+      item.setTitle("Summarize selected with AI").setIcon("sparkles").onClick(() => {
+        this.summarizeSelected();
+      });
+    });
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle("Delete selected").setIcon("trash").onClick(() => {
+        this.deleteSelectedNodes();
+      });
+    });
+    this.showMenu(menu, e);
+  }
+  summarizeSelected() {
+    const selectedIds = Array.from(this.selectedNodes);
+    if (selectedIds.length < 2)
+      return;
+    let sumX = 0, sumY = 0, maxRight = 0;
+    for (const id of selectedIds) {
+      const n = this.nodes.get(id);
+      if (n) {
+        sumX += n.x;
+        sumY += n.y;
+        maxRight = Math.max(maxRight, n.x + n.width);
+      }
+    }
+    const avgY = sumY / selectedIds.length;
+    const newX = maxRight + 60;
+    const newY = avgY;
+    const defaultProvider = this.plugin.settings.providers[0];
+    const newNode = {
+      id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+      x: newX,
+      y: newY,
+      width: 400,
+      height: 500,
+      type: "chat",
+      content: "",
+      title: "Analysis"
+    };
+    const newState = {
+      provider: defaultProvider.name,
+      model: defaultProvider.models[0],
+      contextFiles: [],
+      contextNodes: selectedIds,
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      contextTemplate: DEFAULT_CONTEXT_TEMPLATE
+    };
+    this.nodes.set(newNode.id, newNode);
+    this.chatStates.set(newNode.id, newState);
+    this.chatMessages.set(newNode.id, []);
+    this.renderNode(newNode);
+    for (const id of selectedIds) {
+      this.addEdge(newNode.id, id);
+    }
+    this.clearSelection();
+    this.selectNode(newNode.id);
+    this.zoomToNode(newNode.id);
+    this.triggerSave();
+    setTimeout(() => {
+      const nodeEl = this.nodeElements.get(newNode.id);
+      const input = nodeEl == null ? void 0 : nodeEl.querySelector(".rabbitmap-chat-input");
+      if (input)
+        input.focus();
+    }, 200);
+    new import_obsidian.Notice(`Created analysis chat with ${selectedIds.length} connected nodes`);
+  }
   renderCardContent(node, container) {
     const textarea = container.createEl("textarea", {
       cls: "rabbitmap-card-textarea",
@@ -1642,8 +1884,11 @@ ${msg.content}
     });
   }
   renderChatContent(nodeId, container) {
-    const selectorBar = container.createDiv({ cls: "rabbitmap-chat-selector-bar" });
-    selectorBar.addEventListener("mousedown", (e) => {
+    const headerBar = container.createDiv({ cls: "rabbitmap-chat-header" });
+    const headerIcon = headerBar.createSpan({ cls: "rabbitmap-chat-header-icon" });
+    (0, import_obsidian.setIcon)(headerIcon, "message-square");
+    headerBar.createSpan({ text: "Canvas Chat", cls: "rabbitmap-chat-header-title" });
+    headerBar.addEventListener("mousedown", (e) => {
       e.stopPropagation();
       if (!this.selectedNodes.has(nodeId)) {
         this.clearSelection();
@@ -1657,6 +1902,7 @@ ${msg.content}
         provider: defaultProvider.name,
         model: defaultProvider.models[0],
         contextFiles: [],
+        contextNodes: [],
         systemPrompt: DEFAULT_SYSTEM_PROMPT,
         contextTemplate: DEFAULT_CONTEXT_TEMPLATE
       };
@@ -1671,39 +1917,26 @@ ${msg.content}
     if (!state.contextTemplate) {
       state.contextTemplate = DEFAULT_CONTEXT_TEMPLATE;
     }
-    const providerSelect = selectorBar.createEl("select", { cls: "rabbitmap-select" });
+    const providerSelect = document.createElement("select");
+    providerSelect.className = "rabbitmap-select";
     for (const provider of this.plugin.settings.providers) {
-      const option = providerSelect.createEl("option", {
-        text: provider.name,
-        value: provider.name
-      });
+      const option = document.createElement("option");
+      option.text = provider.name;
+      option.value = provider.name;
       if (provider.name === state.provider) {
         option.selected = true;
       }
+      providerSelect.appendChild(option);
     }
-    const modelSelect = selectorBar.createEl("select", { cls: "rabbitmap-select rabbitmap-model-select" });
-    const editPromptBtn = selectorBar.createEl("button", {
-      text: "Prompt",
-      cls: "rabbitmap-btn rabbitmap-edit-prompt-btn"
-    });
-    editPromptBtn.onclick = (e) => {
-      e.stopPropagation();
-      const currentState = this.chatStates.get(nodeId);
-      new PromptEditorModal(
-        this.app,
-        (currentState == null ? void 0 : currentState.systemPrompt) || "",
-        (currentState == null ? void 0 : currentState.contextTemplate) || DEFAULT_CONTEXT_TEMPLATE,
-        (newPrompt, newTemplate) => {
-          const state2 = this.chatStates.get(nodeId);
-          if (state2) {
-            state2.systemPrompt = newPrompt;
-            state2.contextTemplate = newTemplate;
-            this.chatStates.set(nodeId, state2);
-            this.triggerSave();
-          }
-        }
-      ).open();
+    const modelSelect = document.createElement("select");
+    modelSelect.className = "rabbitmap-select rabbitmap-model-select";
+    const formatModelName = (model) => {
+      if (model.length <= 20)
+        return model;
+      const parts = model.split(/[-/]/);
+      return parts.slice(-2).join("-").substring(0, 20);
     };
+    let modelLabel;
     const updateModelOptions = () => {
       const currentState = this.chatStates.get(nodeId);
       const provider = this.plugin.settings.providers.find((p) => p.name === currentState.provider);
@@ -1713,15 +1946,18 @@ ${msg.content}
       if (provider.name === "OpenRouter" && this.plugin.settings.customOpenRouterModels.trim()) {
         models = this.plugin.settings.customOpenRouterModels.split("\n").map((m) => m.trim()).filter((m) => m.length > 0);
       }
-      modelSelect.empty();
+      modelSelect.innerHTML = "";
       for (const model of models) {
-        const option = modelSelect.createEl("option", {
-          text: model,
-          value: model
-        });
+        const option = document.createElement("option");
+        option.text = model;
+        option.value = model;
         if (model === currentState.model) {
           option.selected = true;
         }
+        modelSelect.appendChild(option);
+      }
+      if (modelLabel) {
+        modelLabel.textContent = formatModelName(currentState.model) + " \u25BE";
       }
     };
     updateModelOptions();
@@ -1738,6 +1974,7 @@ ${msg.content}
           provider: newProvider,
           model: models[0],
           contextFiles: (currentState == null ? void 0 : currentState.contextFiles) || [],
+          contextNodes: (currentState == null ? void 0 : currentState.contextNodes) || [],
           systemPrompt: (currentState == null ? void 0 : currentState.systemPrompt) || DEFAULT_SYSTEM_PROMPT,
           contextTemplate: (currentState == null ? void 0 : currentState.contextTemplate) || DEFAULT_CONTEXT_TEMPLATE
         };
@@ -1751,30 +1988,47 @@ ${msg.content}
       currentState.model = modelSelect.value;
       this.chatStates.set(nodeId, currentState);
       this.triggerSave();
-    };
-    const contextSection = container.createDiv({ cls: "rabbitmap-chat-context" });
-    const contextHeader = contextSection.createDiv({ cls: "rabbitmap-chat-context-header" });
-    contextHeader.createSpan({ text: "Context", cls: "rabbitmap-chat-context-title" });
-    const contextList = contextSection.createDiv({ cls: "rabbitmap-chat-context-list" });
-    const renderContextFiles = () => {
-      contextList.empty();
-      const currentState = this.chatStates.get(nodeId);
-      if (!currentState || currentState.contextFiles.length === 0) {
-        const placeholder = contextList.createDiv({ cls: "rabbitmap-chat-context-placeholder" });
-        placeholder.setText("Drag your md/folders here");
-        return;
+      if (modelLabel) {
+        modelLabel.textContent = formatModelName(currentState.model) + " \u25BE";
       }
+    };
+    const messagesContainer = container.createDiv({ cls: "rabbitmap-chat-messages" });
+    messagesContainer.addEventListener("wheel", (e) => {
+      if (this.selectedNodes.has(nodeId)) {
+        e.stopPropagation();
+      }
+    });
+    messagesContainer.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      if (!this.selectedNodes.has(nodeId)) {
+        this.clearSelection();
+        this.selectNode(nodeId);
+      }
+    });
+    const messages = this.chatMessages.get(nodeId) || [];
+    messages.forEach((msg, index) => {
+      this.renderChatMessage(messagesContainer, msg, nodeId, index);
+    });
+    const bottomSection = container.createDiv({ cls: "rabbitmap-chat-bottom" });
+    const contextChips = bottomSection.createDiv({ cls: "rabbitmap-chat-chips" });
+    const renderContextFiles = () => {
+      contextChips.querySelectorAll(".rabbitmap-chat-chip:not(.rabbitmap-chat-chip-node)").forEach((el) => el.remove());
+      const currentState = this.chatStates.get(nodeId);
+      if (!currentState || currentState.contextFiles.length === 0)
+        return;
       for (const filePath of currentState.contextFiles) {
-        const fileItem = contextList.createDiv({ cls: "rabbitmap-chat-context-item" });
+        const chip = contextChips.createDiv({ cls: "rabbitmap-chat-chip" });
+        const chipIcon = chip.createSpan({ cls: "rabbitmap-chat-chip-icon" });
+        (0, import_obsidian.setIcon)(chipIcon, "file-text");
         const fileName = filePath.split("/").pop() || filePath;
-        fileItem.createSpan({ text: fileName, cls: "rabbitmap-chat-context-filename" });
-        const removeBtn = fileItem.createEl("button", { text: "\xD7", cls: "rabbitmap-chat-context-remove" });
+        chip.createSpan({ text: fileName, cls: "rabbitmap-chat-chip-name" });
+        const removeBtn = chip.createEl("button", { text: "\xD7", cls: "rabbitmap-chat-chip-remove" });
         removeBtn.onclick = (e) => {
           e.stopPropagation();
-          const state2 = this.chatStates.get(nodeId);
-          if (state2) {
-            state2.contextFiles = state2.contextFiles.filter((f) => f !== filePath);
-            this.chatStates.set(nodeId, state2);
+          const s = this.chatStates.get(nodeId);
+          if (s) {
+            s.contextFiles = s.contextFiles.filter((f) => f !== filePath);
+            this.chatStates.set(nodeId, s);
             renderContextFiles();
             this.triggerSave();
           }
@@ -1782,6 +2036,103 @@ ${msg.content}
       }
     };
     renderContextFiles();
+    const renderContextNodes = () => {
+      contextChips.querySelectorAll(".rabbitmap-chat-chip-node").forEach((el) => el.remove());
+      const currentState = this.chatStates.get(nodeId);
+      if (!currentState || !currentState.contextNodes || currentState.contextNodes.length === 0)
+        return;
+      for (const connectedId of currentState.contextNodes) {
+        const connectedNode = this.nodes.get(connectedId);
+        if (!connectedNode)
+          continue;
+        const chip = contextChips.createDiv({ cls: "rabbitmap-chat-chip rabbitmap-chat-chip-node" });
+        const chipIcon = chip.createSpan({ cls: "rabbitmap-chat-chip-icon" });
+        (0, import_obsidian.setIcon)(chipIcon, "share-2");
+        const label = connectedNode.title || connectedNode.linkTitle || connectedNode.url || connectedNode.type;
+        chip.createSpan({ text: `${label}`, cls: "rabbitmap-chat-chip-name" });
+        const removeBtn = chip.createEl("button", { text: "\xD7", cls: "rabbitmap-chat-chip-remove" });
+        removeBtn.onclick = (e) => {
+          e.stopPropagation();
+          const s = this.chatStates.get(nodeId);
+          if (s) {
+            s.contextNodes = s.contextNodes.filter((id) => id !== connectedId);
+            this.chatStates.set(nodeId, s);
+            renderContextNodes();
+            this.triggerSave();
+          }
+        };
+      }
+    };
+    renderContextNodes();
+    const inputWrapper = bottomSection.createDiv({ cls: "rabbitmap-chat-input-wrapper" });
+    const input = inputWrapper.createEl("textarea", {
+      cls: "rabbitmap-chat-input",
+      attr: { placeholder: "Plan, @ for context, / for commands" }
+    });
+    input.addEventListener("focus", () => {
+      if (!this.selectedNodes.has(nodeId)) {
+        this.clearSelection();
+        this.selectNode(nodeId);
+      }
+    });
+    const toolbar = bottomSection.createDiv({ cls: "rabbitmap-chat-toolbar" });
+    const toolbarLeft = toolbar.createDiv({ cls: "rabbitmap-chat-toolbar-left" });
+    const toolbarRight = toolbar.createDiv({ cls: "rabbitmap-chat-toolbar-right" });
+    const attachBtn = toolbarLeft.createEl("button", { cls: "rabbitmap-chat-toolbar-btn" });
+    (0, import_obsidian.setIcon)(attachBtn, "paperclip");
+    attachBtn.setAttribute("aria-label", "Attach files");
+    attachBtn.onclick = (e) => {
+      e.stopPropagation();
+      new import_obsidian.Notice("Drag files or folders onto this chat to add context");
+    };
+    const atBtn = toolbarLeft.createEl("button", { cls: "rabbitmap-chat-toolbar-btn" });
+    (0, import_obsidian.setIcon)(atBtn, "at-sign");
+    atBtn.setAttribute("aria-label", "Add context");
+    const promptBtn = toolbarLeft.createEl("button", { cls: "rabbitmap-chat-toolbar-btn" });
+    (0, import_obsidian.setIcon)(promptBtn, "sliders-horizontal");
+    promptBtn.setAttribute("aria-label", "Edit prompt");
+    promptBtn.onclick = (e) => {
+      e.stopPropagation();
+      const currentState = this.chatStates.get(nodeId);
+      new PromptEditorModal(
+        this.app,
+        (currentState == null ? void 0 : currentState.systemPrompt) || "",
+        (currentState == null ? void 0 : currentState.contextTemplate) || DEFAULT_CONTEXT_TEMPLATE,
+        (newPrompt, newTemplate) => {
+          const st = this.chatStates.get(nodeId);
+          if (st) {
+            st.systemPrompt = newPrompt;
+            st.contextTemplate = newTemplate;
+            this.chatStates.set(nodeId, st);
+            this.triggerSave();
+          }
+        }
+      ).open();
+    };
+    const modelLabelContainer = toolbarRight.createDiv({ cls: "rabbitmap-chat-model-container" });
+    modelLabel = modelLabelContainer.createSpan({ cls: "rabbitmap-chat-model-label" });
+    modelLabel.textContent = formatModelName(state.model) + " \u25BE";
+    const popover = modelLabelContainer.createDiv({ cls: "rabbitmap-chat-model-popover" });
+    popover.style.display = "none";
+    popover.appendChild(providerSelect);
+    popover.appendChild(modelSelect);
+    let popoverOpen = false;
+    modelLabel.onclick = (e) => {
+      e.stopPropagation();
+      popoverOpen = !popoverOpen;
+      popover.style.display = popoverOpen ? "flex" : "none";
+    };
+    document.addEventListener("click", () => {
+      if (popoverOpen) {
+        popoverOpen = false;
+        popover.style.display = "none";
+      }
+    });
+    popover.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+    const sendBtn = toolbarRight.createEl("button", { cls: "rabbitmap-send-btn" });
+    (0, import_obsidian.setIcon)(sendBtn, "arrow-up");
     container.addEventListener("dragover", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1915,38 +2266,6 @@ ${msg.content}
         }
       }
     });
-    const messagesContainer = container.createDiv({ cls: "rabbitmap-chat-messages" });
-    messagesContainer.addEventListener("wheel", (e) => {
-      if (this.selectedNodes.has(nodeId)) {
-        e.stopPropagation();
-      }
-    });
-    messagesContainer.addEventListener("mousedown", (e) => {
-      e.stopPropagation();
-      if (!this.selectedNodes.has(nodeId)) {
-        this.clearSelection();
-        this.selectNode(nodeId);
-      }
-    });
-    const messages = this.chatMessages.get(nodeId) || [];
-    messages.forEach((msg, index) => {
-      this.renderChatMessage(messagesContainer, msg, nodeId, index);
-    });
-    const inputArea = container.createDiv({ cls: "rabbitmap-chat-input-area" });
-    const input = inputArea.createEl("textarea", {
-      cls: "rabbitmap-chat-input",
-      attr: { placeholder: "Type a message..." }
-    });
-    input.addEventListener("focus", () => {
-      if (!this.selectedNodes.has(nodeId)) {
-        this.clearSelection();
-        this.selectNode(nodeId);
-      }
-    });
-    const sendBtn = inputArea.createEl("button", {
-      text: "Send",
-      cls: "rabbitmap-send-btn"
-    });
     const sendMessage = async () => {
       const text = input.value.trim();
       if (!text)
@@ -2008,6 +2327,12 @@ ${msg.content}
         }
         if (contextParts.length > 0) {
           contextContent = "Context files:\n\n" + contextParts.join("\n\n");
+        }
+      }
+      if (chatState.contextNodes && chatState.contextNodes.length > 0) {
+        const nodeContent = this.getConnectedContent(chatState.contextNodes);
+        if (nodeContent) {
+          contextContent = contextContent ? contextContent + "\n\n" + nodeContent : nodeContent;
         }
       }
       try {
@@ -2357,6 +2682,12 @@ ${msg.content}
     for (const [edgeId, edge] of this.edges) {
       if (edge.from === nodeId || edge.to === nodeId) {
         this.edges.delete(edgeId);
+      }
+    }
+    for (const [id, state] of this.chatStates) {
+      if (state.contextNodes && state.contextNodes.includes(nodeId)) {
+        state.contextNodes = state.contextNodes.filter((n) => n !== nodeId);
+        this.chatStates.set(id, state);
       }
     }
     this.updateEdges();
@@ -3218,6 +3549,17 @@ var RabbitMapPlugin = class extends import_obsidian.Plugin {
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    for (const defaultProvider of DEFAULT_SETTINGS.providers) {
+      if (!this.settings.providers.some((p) => p.name === defaultProvider.name)) {
+        this.settings.providers.push(defaultProvider);
+      }
+    }
+    for (const provider of this.settings.providers) {
+      if (!provider.apiFormat) {
+        const defaultMatch = DEFAULT_SETTINGS.providers.find((p) => p.name === provider.name);
+        provider.apiFormat = (defaultMatch == null ? void 0 : defaultMatch.apiFormat) || "openai";
+      }
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);

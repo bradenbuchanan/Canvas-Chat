@@ -11,6 +11,7 @@ import {
 	MarkdownRenderer,
 	Component,
 	requestUrl,
+	setIcon,
 } from "obsidian";
 
 const VIEW_TYPE_RABBITMAP = "rabbitmap-canvas";
@@ -38,6 +39,7 @@ interface ChatMessage {
 	role: "user" | "assistant";
 	content: string;
 	contextFiles?: string[]; // Context files at the time of sending (for user messages)
+	contextNodes?: string[]; // Connected canvas node IDs at the time of sending
 }
 
 interface Edge {
@@ -106,6 +108,7 @@ interface ChatNodeState {
 	provider: string;
 	model: string;
 	contextFiles: string[]; // file paths
+	contextNodes: string[]; // connected canvas node IDs
 	systemPrompt: string;
 	contextTemplate: string; // template for context files
 }
@@ -644,6 +647,20 @@ class RabbitMapView extends TextFileView {
 					const y = mouseY - this.dragOffsetY;
 					this.updateNodePosition(this.draggedNode, x, y);
 				}
+
+				// Visual feedback: highlight chat nodes when dragging a non-chat node over them
+				const draggedNodeData = this.nodes.get(this.draggedNode);
+				if (draggedNodeData && draggedNodeData.type !== "chat") {
+					const dragCenterX = draggedNodeData.x + draggedNodeData.width / 2;
+					const dragCenterY = draggedNodeData.y + draggedNodeData.height / 2;
+					for (const [id, n] of this.nodes) {
+						const el = this.nodeElements.get(id);
+						if (!el || n.type !== "chat" || id === this.draggedNode) continue;
+						const inside = dragCenterX >= n.x && dragCenterX <= n.x + n.width &&
+							dragCenterY >= n.y && dragCenterY <= n.y + n.height;
+						el.toggleClass("rabbitmap-drop-target", inside);
+					}
+				}
 			} else if (this.resizingNode) {
 				const deltaX = (e.clientX - this.resizeStartX) / this.scale;
 				const deltaY = (e.clientY - this.resizeStartY) / this.scale;
@@ -684,6 +701,59 @@ class RabbitMapView extends TextFileView {
 			if (this.isPanning || this.draggedNode || this.resizingNode) {
 				this.triggerSave();
 			}
+
+			// Drag-to-contextualize: detect non-chat node dropped onto chat node
+			if (this.draggedNode) {
+				const draggedNodeData = this.nodes.get(this.draggedNode);
+				if (draggedNodeData && draggedNodeData.type !== "chat") {
+					const dragCenterX = draggedNodeData.x + draggedNodeData.width / 2;
+					const dragCenterY = draggedNodeData.y + draggedNodeData.height / 2;
+					for (const [id, n] of this.nodes) {
+						if (n.type !== "chat" || id === this.draggedNode) continue;
+						const inside = dragCenterX >= n.x && dragCenterX <= n.x + n.width &&
+							dragCenterY >= n.y && dragCenterY <= n.y + n.height;
+						if (inside) {
+							const chatState = this.chatStates.get(id);
+							if (chatState) {
+								if (!chatState.contextNodes) chatState.contextNodes = [];
+								if (!chatState.contextNodes.includes(this.draggedNode)) {
+									chatState.contextNodes.push(this.draggedNode);
+									this.chatStates.set(id, chatState);
+
+									// Add edge if not already connected
+									const hasEdge = Array.from(this.edges.values()).some(
+										edge => (edge.from === id && edge.to === this.draggedNode) ||
+											(edge.from === this.draggedNode && edge.to === id)
+									);
+									if (!hasEdge) {
+										this.addEdge(id, this.draggedNode);
+									}
+
+									// Re-render chat node to show new context
+									const nodeEl = this.nodeElements.get(id);
+									if (nodeEl) {
+										const content = nodeEl.querySelector(".rabbitmap-node-content");
+										if (content) {
+											content.empty();
+											this.renderChatContent(id, content as HTMLElement);
+										}
+									}
+
+									new Notice("Added to chat context");
+									this.triggerSave();
+								}
+							}
+							break;
+						}
+					}
+				}
+
+				// Clear drop target highlights
+				for (const el of this.nodeElements.values()) {
+					el.removeClass("rabbitmap-drop-target");
+				}
+			}
+
 			this.isPanning = false;
 			this.draggedNode = null;
 			this.dragStartPositions.clear();
@@ -1011,6 +1081,18 @@ class RabbitMapView extends TextFileView {
 	private showChatContextMenu(nodeId: string, e: MouseEvent): void {
 		const menu = new Menu();
 
+		const connectedNodes = this.getConnectedNodes(nodeId);
+		if (connectedNodes.length > 0) {
+			menu.addItem((item) => {
+				item.setTitle("Analyze connections")
+					.setIcon("scan-search")
+					.onClick(() => {
+						this.analyzeConnections(nodeId);
+					});
+			});
+			menu.addSeparator();
+		}
+
 		menu.addItem((item) => {
 			item.setTitle("Branch")
 				.setIcon("git-branch")
@@ -1028,6 +1110,36 @@ class RabbitMapView extends TextFileView {
 		});
 
 		this.showMenu(menu, e);
+	}
+
+	private analyzeConnections(nodeId: string): void {
+		const connectedNodes = this.getConnectedNodes(nodeId);
+		if (connectedNodes.length === 0) return;
+
+		const chatState = this.chatStates.get(nodeId);
+		if (!chatState) return;
+
+		chatState.contextNodes = connectedNodes;
+		this.chatStates.set(nodeId, chatState);
+
+		// Re-render the chat node to show connected nodes in context area
+		const nodeEl = this.nodeElements.get(nodeId);
+		if (nodeEl) {
+			const content = nodeEl.querySelector(".rabbitmap-node-content");
+			if (content) {
+				content.empty();
+				this.renderChatContent(nodeId, content as HTMLElement);
+			}
+		}
+
+		// Focus the chat input
+		setTimeout(() => {
+			const input = nodeEl?.querySelector(".rabbitmap-chat-input") as HTMLTextAreaElement;
+			if (input) input.focus();
+		}, 100);
+
+		this.triggerSave();
+		new Notice(`Added ${connectedNodes.length} connected node(s) as context`);
 	}
 
 	private branchChat(nodeId: string, upToMsgIndex?: number): void {
@@ -1057,6 +1169,7 @@ class RabbitMapView extends TextFileView {
 			provider: sourceState.provider,
 			model: sourceState.model,
 			contextFiles: [...sourceState.contextFiles],
+			contextNodes: [...(sourceState.contextNodes || [])],
 			systemPrompt: sourceState.systemPrompt,
 			contextTemplate: sourceState.contextTemplate,
 		};
@@ -1138,7 +1251,8 @@ class RabbitMapView extends TextFileView {
 		const msg: ChatMessage = {
 			role: "user",
 			content: text,
-			contextFiles: chatState.contextFiles ? [...chatState.contextFiles] : []
+			contextFiles: chatState.contextFiles ? [...chatState.contextFiles] : [],
+			contextNodes: chatState.contextNodes ? [...chatState.contextNodes] : []
 		};
 
 		const messages = this.chatMessages.get(nodeId) || [];
@@ -1195,6 +1309,16 @@ class RabbitMapView extends TextFileView {
 			}
 			if (contextParts.length > 0) {
 				contextContent = "Context files:\n\n" + contextParts.join("\n\n");
+			}
+		}
+
+		// Load connected node context
+		if (chatState.contextNodes && chatState.contextNodes.length > 0) {
+			const nodeContent = this.getConnectedContent(chatState.contextNodes);
+			if (nodeContent) {
+				contextContent = contextContent
+					? contextContent + "\n\n" + nodeContent
+					: nodeContent;
 			}
 		}
 
@@ -1351,6 +1475,7 @@ class RabbitMapView extends TextFileView {
 			provider: sourceState.provider,
 			model: sourceState.model,
 			contextFiles: [...sourceState.contextFiles],
+			contextNodes: [...(sourceState.contextNodes || [])],
 			systemPrompt: sourceState.systemPrompt,
 			contextTemplate: sourceState.contextTemplate,
 		};
@@ -1440,6 +1565,65 @@ class RabbitMapView extends TextFileView {
 		return false;
 	}
 
+	// --- Connection Analysis Utilities ---
+
+	private getConnectedNodes(nodeId: string): string[] {
+		const connected = new Set<string>();
+		for (const edge of this.edges.values()) {
+			if (edge.from === nodeId) connected.add(edge.to);
+			if (edge.to === nodeId) connected.add(edge.from);
+		}
+		return Array.from(connected);
+	}
+
+	private getNodeContent(nodeId: string): string {
+		const node = this.nodes.get(nodeId);
+		if (!node) return "";
+
+		switch (node.type) {
+			case "card":
+				return `[Card: ${node.title || "Untitled"}]\n${node.content || ""}`;
+
+			case "link": {
+				const parts: string[] = [`[Link: ${node.linkTitle || node.url || "Untitled"}]`];
+				if (node.url) parts.push(`URL: ${node.url}`);
+				if (node.linkDescription) parts.push(node.linkDescription);
+				if (node.linkContent) {
+					const content = node.linkContent.length > 4000
+						? node.linkContent.slice(0, 4000) + "\n... [truncated]"
+						: node.linkContent;
+					parts.push(content);
+				}
+				return parts.join("\n");
+			}
+
+			case "note":
+				return `[Note: ${node.filePath || node.title || "Untitled"}]\n${node.content || ""}`;
+
+			case "chat": {
+				const messages = this.chatMessages.get(nodeId) || [];
+				const recent = messages.slice(-10);
+				let summary = `[Chat: ${node.title || "Chat"}]\n`;
+				summary += recent.map(m => `${m.role}: ${m.content}`).join("\n");
+				if (summary.length > 4000) {
+					summary = summary.slice(0, 4000) + "\n... [truncated]";
+				}
+				return summary;
+			}
+
+			default:
+				return node.content || "";
+		}
+	}
+
+	private getConnectedContent(nodeIds: string[]): string {
+		const parts = nodeIds
+			.map(id => this.getNodeContent(id))
+			.filter(content => content.length > 0);
+		if (parts.length === 0) return "";
+		return "Connected nodes:\n\n" + parts.join("\n\n---\n\n");
+	}
+
 	private addEdge(fromId: string, toId: string): void {
 		const edge: Edge = {
 			id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -1448,6 +1632,35 @@ class RabbitMapView extends TextFileView {
 		};
 		this.edges.set(edge.id, edge);
 		this.renderEdge(edge);
+
+		// Auto-add connected node as context if one side is a chat node
+		this.addEdgeContext(fromId, toId);
+		this.addEdgeContext(toId, fromId);
+	}
+
+	private addEdgeContext(chatNodeId: string, otherNodeId: string): void {
+		const chatNode = this.nodes.get(chatNodeId);
+		if (!chatNode || chatNode.type !== "chat") return;
+
+		const chatState = this.chatStates.get(chatNodeId);
+		if (!chatState) return;
+
+		if (!chatState.contextNodes) chatState.contextNodes = [];
+		if (!chatState.contextNodes.includes(otherNodeId)) {
+			chatState.contextNodes.push(otherNodeId);
+			this.chatStates.set(chatNodeId, chatState);
+
+			// Re-render chat node to show new context chip
+			const nodeEl = this.nodeElements.get(chatNodeId);
+			if (nodeEl) {
+				const content = nodeEl.querySelector(".rabbitmap-node-content");
+				if (content) {
+					content.empty();
+					this.renderChatContent(chatNodeId, content as HTMLElement);
+				}
+			}
+			this.triggerSave();
+		}
 	}
 
 	private renderAllEdges(): void {
@@ -1755,6 +1968,7 @@ class RabbitMapView extends TextFileView {
 					provider: defaultProvider.name,
 					model: defaultProvider.models[0],
 					contextFiles: [],
+					contextNodes: [],
 					systemPrompt: DEFAULT_SYSTEM_PROMPT,
 					contextTemplate: DEFAULT_CONTEXT_TEMPLATE
 				});
@@ -1874,32 +2088,25 @@ class RabbitMapView extends TextFileView {
 			this.zoomToNode(node.id);
 		});
 
-		// Right-click context menu for chat nodes
-		if (node.type === "chat") {
-			el.addEventListener("contextmenu", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
+		// Right-click context menu
+		el.addEventListener("contextmenu", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+
+			// Multi-select context menu takes priority
+			if (this.selectedNodes.size >= 2 && this.selectedNodes.has(node.id)) {
+				this.showMultiSelectContextMenu(e);
+				return;
+			}
+
+			if (node.type === "chat") {
 				this.showChatContextMenu(node.id, e);
-			});
-		}
-
-		// Right-click context menu for link nodes
-		if (node.type === "link") {
-			el.addEventListener("contextmenu", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
+			} else if (node.type === "link") {
 				this.showLinkContextMenu(node.id, e);
-			});
-		}
-
-		// Right-click context menu for note nodes
-		if (node.type === "note") {
-			el.addEventListener("contextmenu", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
+			} else if (node.type === "note") {
 				this.showNoteContextMenu(node.id, e);
-			});
-		}
+			}
+		});
 
 		// Content area
 		const content = el.createDiv({ cls: "rabbitmap-node-content" });
@@ -2098,6 +2305,94 @@ class RabbitMapView extends TextFileView {
 		this.showMenu(menu, e);
 	}
 
+	private showMultiSelectContextMenu(e: MouseEvent): void {
+		const menu = new Menu();
+
+		menu.addItem((item) => {
+			item.setTitle("Summarize selected with AI")
+				.setIcon("sparkles")
+				.onClick(() => {
+					this.summarizeSelected();
+				});
+		});
+
+		menu.addSeparator();
+
+		menu.addItem((item) => {
+			item.setTitle("Delete selected")
+				.setIcon("trash")
+				.onClick(() => {
+					this.deleteSelectedNodes();
+				});
+		});
+
+		this.showMenu(menu, e);
+	}
+
+	private summarizeSelected(): void {
+		const selectedIds = Array.from(this.selectedNodes);
+		if (selectedIds.length < 2) return;
+
+		// Calculate centroid of selected nodes and offset new chat node to the right
+		let sumX = 0, sumY = 0, maxRight = 0;
+		for (const id of selectedIds) {
+			const n = this.nodes.get(id);
+			if (n) {
+				sumX += n.x;
+				sumY += n.y;
+				maxRight = Math.max(maxRight, n.x + n.width);
+			}
+		}
+		const avgY = sumY / selectedIds.length;
+		const newX = maxRight + 60;
+		const newY = avgY;
+
+		const defaultProvider = this.plugin.settings.providers[0];
+		const newNode: CanvasNode = {
+			id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+			x: newX,
+			y: newY,
+			width: 400,
+			height: 500,
+			type: "chat",
+			content: "",
+			title: "Analysis",
+		};
+
+		const newState: ChatNodeState = {
+			provider: defaultProvider.name,
+			model: defaultProvider.models[0],
+			contextFiles: [],
+			contextNodes: selectedIds,
+			systemPrompt: DEFAULT_SYSTEM_PROMPT,
+			contextTemplate: DEFAULT_CONTEXT_TEMPLATE,
+		};
+
+		this.nodes.set(newNode.id, newNode);
+		this.chatStates.set(newNode.id, newState);
+		this.chatMessages.set(newNode.id, []);
+		this.renderNode(newNode);
+
+		// Draw edges from new chat node to each selected node
+		for (const id of selectedIds) {
+			this.addEdge(newNode.id, id);
+		}
+
+		this.clearSelection();
+		this.selectNode(newNode.id);
+		this.zoomToNode(newNode.id);
+		this.triggerSave();
+
+		// Focus the chat input
+		setTimeout(() => {
+			const nodeEl = this.nodeElements.get(newNode.id);
+			const input = nodeEl?.querySelector(".rabbitmap-chat-input") as HTMLTextAreaElement;
+			if (input) input.focus();
+		}, 200);
+
+		new Notice(`Created analysis chat with ${selectedIds.length} connected nodes`);
+	}
+
 	private renderCardContent(node: CanvasNode, container: HTMLElement): void {
 		const textarea = container.createEl("textarea", {
 			cls: "rabbitmap-card-textarea",
@@ -2146,11 +2441,14 @@ class RabbitMapView extends TextFileView {
 	}
 
 	private renderChatContent(nodeId: string, container: HTMLElement): void {
-		// Model selector bar
-		const selectorBar = container.createDiv({ cls: "rabbitmap-chat-selector-bar" });
+		// Header bar
+		const headerBar = container.createDiv({ cls: "rabbitmap-chat-header" });
+		const headerIcon = headerBar.createSpan({ cls: "rabbitmap-chat-header-icon" });
+		setIcon(headerIcon, "message-square");
+		headerBar.createSpan({ text: "Canvas Chat", cls: "rabbitmap-chat-header-title" });
 
-		// Click on selector bar selects the node
-		selectorBar.addEventListener("mousedown", (e) => {
+		// Click on header selects the node
+		headerBar.addEventListener("mousedown", (e) => {
 			e.stopPropagation();
 			if (!this.selectedNodes.has(nodeId)) {
 				this.clearSelection();
@@ -2166,6 +2464,7 @@ class RabbitMapView extends TextFileView {
 				provider: defaultProvider.name,
 				model: defaultProvider.models[0],
 				contextFiles: [],
+				contextNodes: [],
 				systemPrompt: DEFAULT_SYSTEM_PROMPT,
 				contextTemplate: DEFAULT_CONTEXT_TEMPLATE
 			};
@@ -2182,51 +2481,36 @@ class RabbitMapView extends TextFileView {
 			state.contextTemplate = DEFAULT_CONTEXT_TEMPLATE;
 		}
 
-		// Provider selector
-		const providerSelect = selectorBar.createEl("select", { cls: "rabbitmap-select" });
+		// --- Provider & model selects (created detached, placed in toolbar later) ---
+		const providerSelect = document.createElement("select");
+		providerSelect.className = "rabbitmap-select";
 		for (const provider of this.plugin.settings.providers) {
-			const option = providerSelect.createEl("option", {
-				text: provider.name,
-				value: provider.name
-			});
+			const option = document.createElement("option");
+			option.text = provider.name;
+			option.value = provider.name;
 			if (provider.name === state.provider) {
 				option.selected = true;
 			}
+			providerSelect.appendChild(option);
 		}
 
-		// Model selector
-		const modelSelect = selectorBar.createEl("select", { cls: "rabbitmap-select rabbitmap-model-select" });
+		const modelSelect = document.createElement("select");
+		modelSelect.className = "rabbitmap-select rabbitmap-model-select";
 
-		// Edit Prompt button
-		const editPromptBtn = selectorBar.createEl("button", {
-			text: "Prompt",
-			cls: "rabbitmap-btn rabbitmap-edit-prompt-btn"
-		});
-		editPromptBtn.onclick = (e) => {
-			e.stopPropagation();
-			const currentState = this.chatStates.get(nodeId);
-			new PromptEditorModal(
-				this.app,
-				currentState?.systemPrompt || "",
-				currentState?.contextTemplate || DEFAULT_CONTEXT_TEMPLATE,
-				(newPrompt, newTemplate) => {
-					const state = this.chatStates.get(nodeId);
-					if (state) {
-						state.systemPrompt = newPrompt;
-						state.contextTemplate = newTemplate;
-						this.chatStates.set(nodeId, state);
-						this.triggerSave();
-					}
-				}
-			).open();
+		const formatModelName = (model: string): string => {
+			if (model.length <= 20) return model;
+			const parts = model.split(/[-/]/);
+			return parts.slice(-2).join("-").substring(0, 20);
 		};
+
+		// Will be set after toolbar is created
+		let modelLabel: HTMLSpanElement;
 
 		const updateModelOptions = () => {
 			const currentState = this.chatStates.get(nodeId)!;
 			const provider = this.plugin.settings.providers.find(p => p.name === currentState.provider);
 			if (!provider) return;
 
-			// Use custom models for OpenRouter if specified
 			let models = provider.models;
 			if (provider.name === "OpenRouter" && this.plugin.settings.customOpenRouterModels.trim()) {
 				models = this.plugin.settings.customOpenRouterModels
@@ -2235,15 +2519,18 @@ class RabbitMapView extends TextFileView {
 					.filter(m => m.length > 0);
 			}
 
-			modelSelect.empty();
+			modelSelect.innerHTML = "";
 			for (const model of models) {
-				const option = modelSelect.createEl("option", {
-					text: model,
-					value: model
-				});
+				const option = document.createElement("option");
+				option.text = model;
+				option.value = model;
 				if (model === currentState.model) {
 					option.selected = true;
 				}
+				modelSelect.appendChild(option);
+			}
+			if (modelLabel) {
+				modelLabel.textContent = formatModelName(currentState.model) + " \u25BE";
 			}
 		};
 
@@ -2253,7 +2540,6 @@ class RabbitMapView extends TextFileView {
 			const newProvider = providerSelect.value;
 			const provider = this.plugin.settings.providers.find(p => p.name === newProvider);
 			if (provider) {
-				// Use custom models for OpenRouter if specified
 				let models = provider.models;
 				if (provider.name === "OpenRouter" && this.plugin.settings.customOpenRouterModels.trim()) {
 					models = this.plugin.settings.customOpenRouterModels
@@ -2267,6 +2553,7 @@ class RabbitMapView extends TextFileView {
 					provider: newProvider,
 					model: models[0],
 					contextFiles: currentState?.contextFiles || [],
+					contextNodes: currentState?.contextNodes || [],
 					systemPrompt: currentState?.systemPrompt || DEFAULT_SYSTEM_PROMPT,
 					contextTemplate: currentState?.contextTemplate || DEFAULT_CONTEXT_TEMPLATE
 				};
@@ -2281,38 +2568,59 @@ class RabbitMapView extends TextFileView {
 			currentState.model = modelSelect.value;
 			this.chatStates.set(nodeId, currentState);
 			this.triggerSave();
+			if (modelLabel) {
+				modelLabel.textContent = formatModelName(currentState.model) + " \u25BE";
+			}
 		};
 
-		// Context section
-		const contextSection = container.createDiv({ cls: "rabbitmap-chat-context" });
-		const contextHeader = contextSection.createDiv({ cls: "rabbitmap-chat-context-header" });
-		contextHeader.createSpan({ text: "Context", cls: "rabbitmap-chat-context-title" });
+		// --- Messages container ---
+		const messagesContainer = container.createDiv({ cls: "rabbitmap-chat-messages" });
 
-		const contextList = contextSection.createDiv({ cls: "rabbitmap-chat-context-list" });
+		messagesContainer.addEventListener("wheel", (e: WheelEvent) => {
+			if (this.selectedNodes.has(nodeId)) {
+				e.stopPropagation();
+			}
+		});
+
+		messagesContainer.addEventListener("mousedown", (e: MouseEvent) => {
+			e.stopPropagation();
+			if (!this.selectedNodes.has(nodeId)) {
+				this.clearSelection();
+				this.selectNode(nodeId);
+			}
+		});
+
+		const messages = this.chatMessages.get(nodeId) || [];
+		messages.forEach((msg, index) => {
+			this.renderChatMessage(messagesContainer, msg, nodeId, index);
+		});
+
+		// --- Bottom composite section ---
+		const bottomSection = container.createDiv({ cls: "rabbitmap-chat-bottom" });
+
+		// Context chips
+		const contextChips = bottomSection.createDiv({ cls: "rabbitmap-chat-chips" });
 
 		const renderContextFiles = () => {
-			contextList.empty();
+			// Remove only file chips (not node chips)
+			contextChips.querySelectorAll(".rabbitmap-chat-chip:not(.rabbitmap-chat-chip-node)").forEach(el => el.remove());
 			const currentState = this.chatStates.get(nodeId);
-
-			if (!currentState || currentState.contextFiles.length === 0) {
-				// Show placeholder
-				const placeholder = contextList.createDiv({ cls: "rabbitmap-chat-context-placeholder" });
-				placeholder.setText("Drag your md/folders here");
-				return;
-			}
+			if (!currentState || currentState.contextFiles.length === 0) return;
 
 			for (const filePath of currentState.contextFiles) {
-				const fileItem = contextList.createDiv({ cls: "rabbitmap-chat-context-item" });
+				const chip = contextChips.createDiv({ cls: "rabbitmap-chat-chip" });
+				const chipIcon = chip.createSpan({ cls: "rabbitmap-chat-chip-icon" });
+				setIcon(chipIcon, "file-text");
 				const fileName = filePath.split("/").pop() || filePath;
-				fileItem.createSpan({ text: fileName, cls: "rabbitmap-chat-context-filename" });
+				chip.createSpan({ text: fileName, cls: "rabbitmap-chat-chip-name" });
 
-				const removeBtn = fileItem.createEl("button", { text: "×", cls: "rabbitmap-chat-context-remove" });
-				removeBtn.onclick = (e) => {
+				const removeBtn = chip.createEl("button", { text: "\u00D7", cls: "rabbitmap-chat-chip-remove" });
+				removeBtn.onclick = (e: MouseEvent) => {
 					e.stopPropagation();
-					const state = this.chatStates.get(nodeId);
-					if (state) {
-						state.contextFiles = state.contextFiles.filter(f => f !== filePath);
-						this.chatStates.set(nodeId, state);
+					const s = this.chatStates.get(nodeId);
+					if (s) {
+						s.contextFiles = s.contextFiles.filter(f => f !== filePath);
+						this.chatStates.set(nodeId, s);
 						renderContextFiles();
 						this.triggerSave();
 					}
@@ -2322,31 +2630,147 @@ class RabbitMapView extends TextFileView {
 
 		renderContextFiles();
 
-		// Drag and drop handling
-		container.addEventListener("dragover", (e) => {
+		const renderContextNodes = () => {
+			contextChips.querySelectorAll(".rabbitmap-chat-chip-node").forEach(el => el.remove());
+			const currentState = this.chatStates.get(nodeId);
+			if (!currentState || !currentState.contextNodes || currentState.contextNodes.length === 0) return;
+
+			for (const connectedId of currentState.contextNodes) {
+				const connectedNode = this.nodes.get(connectedId);
+				if (!connectedNode) continue;
+
+				const chip = contextChips.createDiv({ cls: "rabbitmap-chat-chip rabbitmap-chat-chip-node" });
+				const chipIcon = chip.createSpan({ cls: "rabbitmap-chat-chip-icon" });
+				setIcon(chipIcon, "share-2");
+				const label = connectedNode.title || connectedNode.linkTitle || connectedNode.url || connectedNode.type;
+				chip.createSpan({ text: `${label}`, cls: "rabbitmap-chat-chip-name" });
+
+				const removeBtn = chip.createEl("button", { text: "\u00D7", cls: "rabbitmap-chat-chip-remove" });
+				removeBtn.onclick = (e: MouseEvent) => {
+					e.stopPropagation();
+					const s = this.chatStates.get(nodeId);
+					if (s) {
+						s.contextNodes = s.contextNodes.filter(id => id !== connectedId);
+						this.chatStates.set(nodeId, s);
+						renderContextNodes();
+						this.triggerSave();
+					}
+				};
+			}
+		};
+
+		renderContextNodes();
+
+		// Input wrapper
+		const inputWrapper = bottomSection.createDiv({ cls: "rabbitmap-chat-input-wrapper" });
+		const input = inputWrapper.createEl("textarea", {
+			cls: "rabbitmap-chat-input",
+			attr: { placeholder: "Plan, @ for context, / for commands" },
+		});
+
+		input.addEventListener("focus", () => {
+			if (!this.selectedNodes.has(nodeId)) {
+				this.clearSelection();
+				this.selectNode(nodeId);
+			}
+		});
+
+		// Toolbar
+		const toolbar = bottomSection.createDiv({ cls: "rabbitmap-chat-toolbar" });
+		const toolbarLeft = toolbar.createDiv({ cls: "rabbitmap-chat-toolbar-left" });
+		const toolbarRight = toolbar.createDiv({ cls: "rabbitmap-chat-toolbar-right" });
+
+		// Attach button (paperclip)
+		const attachBtn = toolbarLeft.createEl("button", { cls: "rabbitmap-chat-toolbar-btn" });
+		setIcon(attachBtn, "paperclip");
+		attachBtn.setAttribute("aria-label", "Attach files");
+		attachBtn.onclick = (e: MouseEvent) => {
+			e.stopPropagation();
+			new Notice("Drag files or folders onto this chat to add context");
+		};
+
+		// @ button
+		const atBtn = toolbarLeft.createEl("button", { cls: "rabbitmap-chat-toolbar-btn" });
+		setIcon(atBtn, "at-sign");
+		atBtn.setAttribute("aria-label", "Add context");
+
+		// Prompt edit button (sliders)
+		const promptBtn = toolbarLeft.createEl("button", { cls: "rabbitmap-chat-toolbar-btn" });
+		setIcon(promptBtn, "sliders-horizontal");
+		promptBtn.setAttribute("aria-label", "Edit prompt");
+		promptBtn.onclick = (e: MouseEvent) => {
+			e.stopPropagation();
+			const currentState = this.chatStates.get(nodeId);
+			new PromptEditorModal(
+				this.app,
+				currentState?.systemPrompt || "",
+				currentState?.contextTemplate || DEFAULT_CONTEXT_TEMPLATE,
+				(newPrompt, newTemplate) => {
+					const st = this.chatStates.get(nodeId);
+					if (st) {
+						st.systemPrompt = newPrompt;
+						st.contextTemplate = newTemplate;
+						this.chatStates.set(nodeId, st);
+						this.triggerSave();
+					}
+				}
+			).open();
+		};
+
+		// Model label + popover
+		const modelLabelContainer = toolbarRight.createDiv({ cls: "rabbitmap-chat-model-container" });
+		modelLabel = modelLabelContainer.createSpan({ cls: "rabbitmap-chat-model-label" });
+		modelLabel.textContent = formatModelName(state.model) + " \u25BE";
+
+		const popover = modelLabelContainer.createDiv({ cls: "rabbitmap-chat-model-popover" });
+		popover.style.display = "none";
+		popover.appendChild(providerSelect);
+		popover.appendChild(modelSelect);
+
+		let popoverOpen = false;
+		modelLabel.onclick = (e: MouseEvent) => {
+			e.stopPropagation();
+			popoverOpen = !popoverOpen;
+			popover.style.display = popoverOpen ? "flex" : "none";
+		};
+
+		document.addEventListener("click", () => {
+			if (popoverOpen) {
+				popoverOpen = false;
+				popover.style.display = "none";
+			}
+		});
+
+		popover.addEventListener("click", (e: MouseEvent) => {
+			e.stopPropagation();
+		});
+
+		// Send button (circular with arrow)
+		const sendBtn = toolbarRight.createEl("button", { cls: "rabbitmap-send-btn" });
+		setIcon(sendBtn, "arrow-up");
+
+		// --- Drag and drop handling (on container) ---
+		container.addEventListener("dragover", (e: DragEvent) => {
 			e.preventDefault();
 			e.stopPropagation();
 			container.addClass("rabbitmap-drag-over");
 		});
 
-		container.addEventListener("dragleave", (e) => {
+		container.addEventListener("dragleave", (e: DragEvent) => {
 			e.preventDefault();
 			container.removeClass("rabbitmap-drag-over");
 		});
 
-		container.addEventListener("drop", (e) => {
+		container.addEventListener("drop", (e: DragEvent) => {
 			e.preventDefault();
 			e.stopPropagation();
 			container.removeClass("rabbitmap-drag-over");
 
-			// Get dropped data from Obsidian
 			const plainText = e.dataTransfer?.getData("text/plain") || "";
 
-			// Parse path from various formats
 			const parsePath = (input: string): string => {
 				input = input.trim();
 
-				// Handle obsidian:// URL format
 				if (input.startsWith("obsidian://")) {
 					try {
 						const url = new URL(input);
@@ -2357,24 +2781,20 @@ class RabbitMapView extends TextFileView {
 					} catch {}
 				}
 
-				// Handle URL encoding
 				try {
 					input = decodeURIComponent(input);
 				} catch {}
 
-				// Handle [[wikilink]] format
 				const wikiMatch = input.match(/^\[\[(.+?)\]\]$/);
 				if (wikiMatch) {
 					return wikiMatch[1];
 				}
 
-				// Handle [name](path) format
 				const mdMatch = input.match(/^\[.+?\]\((.+?)\)$/);
 				if (mdMatch) {
 					return mdMatch[1];
 				}
 
-				// Remove leading slash if present
 				if (input.startsWith("/")) {
 					input = input.slice(1);
 				}
@@ -2382,7 +2802,6 @@ class RabbitMapView extends TextFileView {
 				return input;
 			};
 
-			// Add all files from a folder recursively
 			const addFilesFromFolder = (folder: TFolder, state: ChatNodeState) => {
 				for (const child of folder.children) {
 					if (child instanceof TFile) {
@@ -2395,7 +2814,6 @@ class RabbitMapView extends TextFileView {
 				}
 			};
 
-			// Get all folders recursively
 			const getAllFolders = (folder: TFolder): TFolder[] => {
 				const folders: TFolder[] = [folder];
 				for (const child of folder.children) {
@@ -2406,14 +2824,12 @@ class RabbitMapView extends TextFileView {
 				return folders;
 			};
 
-			// Try to find file/folder by various methods
 			const tryAddPath = (input: string) => {
 				if (!input) return false;
 
 				let path = parsePath(input);
 				if (!path) return false;
 
-				// Handle HTTP URLs by creating a link node
 				if (path.startsWith("http")) {
 					const canvasRect = this.canvas.getBoundingClientRect();
 					const x = (e.clientX - canvasRect.left - this.panX) / this.scale;
@@ -2422,16 +2838,13 @@ class RabbitMapView extends TextFileView {
 					return true;
 				}
 
-				// Try to find the file or folder
 				let item = this.app.vault.getAbstractFileByPath(path);
 
-				// If not found, try adding .md extension
 				if (!item && !path.includes(".")) {
 					item = this.app.vault.getAbstractFileByPath(path + ".md");
 					if (item) path = path + ".md";
 				}
 
-				// If still not found, try to find folder by name
 				if (!item && !path.includes(".")) {
 					const rootFolder = this.app.vault.getRoot();
 					const allFolders = getAllFolders(rootFolder);
@@ -2443,7 +2856,6 @@ class RabbitMapView extends TextFileView {
 					) || null;
 				}
 
-				// If still not found, try to find by name in all files
 				if (!item) {
 					const allFiles = this.app.vault.getFiles();
 					const fileName = path.split("/").pop() || path;
@@ -2459,13 +2871,11 @@ class RabbitMapView extends TextFileView {
 				const state = this.chatStates.get(nodeId);
 				if (!state) return false;
 
-				// Handle folder - add all files from it
 				if (item instanceof TFolder) {
 					addFilesFromFolder(item, state);
 					return true;
 				}
 
-				// Handle file
 				if (item instanceof TFile) {
 					if (!state.contextFiles.includes(path)) {
 						state.contextFiles.push(path);
@@ -2477,9 +2887,7 @@ class RabbitMapView extends TextFileView {
 
 			let added = false;
 
-			// Try plain text
 			if (plainText) {
-				// Could be multiple lines
 				const lines = plainText.split("\n");
 				for (const line of lines) {
 					if (tryAddPath(line.trim())) {
@@ -2498,53 +2906,11 @@ class RabbitMapView extends TextFileView {
 			}
 		});
 
-		const messagesContainer = container.createDiv({ cls: "rabbitmap-chat-messages" });
-
-		// Only prevent wheel events if node is selected
-		messagesContainer.addEventListener("wheel", (e) => {
-			if (this.selectedNodes.has(nodeId)) {
-				e.stopPropagation();
-			}
-		});
-
-		// Click on messages area selects the node
-		messagesContainer.addEventListener("mousedown", (e) => {
-			e.stopPropagation();
-			if (!this.selectedNodes.has(nodeId)) {
-				this.clearSelection();
-				this.selectNode(nodeId);
-			}
-		});
-
-		const messages = this.chatMessages.get(nodeId) || [];
-		messages.forEach((msg, index) => {
-			this.renderChatMessage(messagesContainer, msg, nodeId, index);
-		});
-
-		const inputArea = container.createDiv({ cls: "rabbitmap-chat-input-area" });
-		const input = inputArea.createEl("textarea", {
-			cls: "rabbitmap-chat-input",
-			attr: { placeholder: "Type a message..." },
-		});
-
-		// Focus on input selects the node
-		input.addEventListener("focus", () => {
-			if (!this.selectedNodes.has(nodeId)) {
-				this.clearSelection();
-				this.selectNode(nodeId);
-			}
-		});
-
-		const sendBtn = inputArea.createEl("button", {
-			text: "Send",
-			cls: "rabbitmap-send-btn",
-		});
-
+		// --- Send message logic ---
 		const sendMessage = async () => {
 			const text = input.value.trim();
 			if (!text) return;
 
-			// Get chat state to capture current context
 			const chatState = this.chatStates.get(nodeId)!;
 
 			const msg: ChatMessage = {
@@ -2562,10 +2928,8 @@ class RabbitMapView extends TextFileView {
 			const provider = this.plugin.settings.providers.find(p => p.name === chatState.provider);
 			if (!provider) return;
 
-			// Get API key from provider config (with fallback to legacy fields for migration)
 			let apiKey = provider.apiKey || "";
 			if (!apiKey) {
-				// Fallback to legacy API key fields for backward compatibility
 				if (chatState.provider === "OpenAI" && this.plugin.settings.openaiApiKey) {
 					apiKey = this.plugin.settings.openaiApiKey;
 				} else if (chatState.provider === "OpenRouter" && this.plugin.settings.openrouterApiKey) {
@@ -2585,14 +2949,12 @@ class RabbitMapView extends TextFileView {
 				return;
 			}
 
-			// Show loading indicator
 			const loadingEl = messagesContainer.createDiv({
 				cls: "rabbitmap-chat-message rabbitmap-chat-assistant rabbitmap-chat-loading",
 			});
 			loadingEl.createSpan({ text: "..." });
 			messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
-			// Load context files content
 			let contextContent = "";
 			if (chatState.contextFiles && chatState.contextFiles.length > 0) {
 				const template = chatState.contextTemplate || DEFAULT_CONTEXT_TEMPLATE;
@@ -2612,6 +2974,15 @@ class RabbitMapView extends TextFileView {
 				}
 				if (contextParts.length > 0) {
 					contextContent = "Context files:\n\n" + contextParts.join("\n\n");
+				}
+			}
+
+			if (chatState.contextNodes && chatState.contextNodes.length > 0) {
+				const nodeContent = this.getConnectedContent(chatState.contextNodes);
+				if (nodeContent) {
+					contextContent = contextContent
+						? contextContent + "\n\n" + nodeContent
+						: nodeContent;
 				}
 			}
 
@@ -2641,7 +3012,7 @@ class RabbitMapView extends TextFileView {
 		};
 
 		sendBtn.onclick = sendMessage;
-		input.addEventListener("keydown", (e) => {
+		input.addEventListener("keydown", (e: KeyboardEvent) => {
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				sendMessage();
@@ -3012,6 +3383,13 @@ class RabbitMapView extends TextFileView {
 		for (const [edgeId, edge] of this.edges) {
 			if (edge.from === nodeId || edge.to === nodeId) {
 				this.edges.delete(edgeId);
+			}
+		}
+		// Remove this node from any chat's contextNodes
+		for (const [id, state] of this.chatStates) {
+			if (state.contextNodes && state.contextNodes.includes(nodeId)) {
+				state.contextNodes = state.contextNodes.filter(n => n !== nodeId);
+				this.chatStates.set(id, state);
 			}
 		}
 		this.updateEdges();
@@ -4097,6 +4475,19 @@ export default class RabbitMapPlugin extends Plugin {
 
 	async loadSettings(): Promise<void> {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		// Merge in any default providers that are missing from saved settings
+		for (const defaultProvider of DEFAULT_SETTINGS.providers) {
+			if (!this.settings.providers.some(p => p.name === defaultProvider.name)) {
+				this.settings.providers.push(defaultProvider);
+			}
+		}
+		// Ensure all providers have apiFormat (backfill for old data)
+		for (const provider of this.settings.providers) {
+			if (!provider.apiFormat) {
+				const defaultMatch = DEFAULT_SETTINGS.providers.find(p => p.name === provider.name);
+				(provider as any).apiFormat = defaultMatch?.apiFormat || "openai";
+			}
+		}
 	}
 
 	async saveSettings(): Promise<void> {
