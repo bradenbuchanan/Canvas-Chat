@@ -1,8 +1,12 @@
-# RabbitMap
+# Canvas Chat
 
 An infinite canvas plugin for Obsidian with AI chat nodes. Create visual workspaces where you can have multiple LLM conversations alongside your notes — with easy drag & drop context management from your vault.
 
-![RabbitMap Screenshot](screen.png)
+## Credits / Based on
+
+Canvas Chat is a fork of [bayradion/rabbitmap](https://github.com/bayradion/rabbitmap) by [@bayradion](https://x.com/bayradion), the Obsidian plugin originally released alongside [rabbitmap.com](https://rabbitmap.com). Canvas Chat continues that work as an independent, community-focused Obsidian plugin under the same MIT license. See [NOTICE.md](NOTICE.md) for details.
+
+![Canvas Chat Screenshot](screen.png)
 
 ## Features
 
@@ -23,19 +27,19 @@ An infinite canvas plugin for Obsidian with AI chat nodes. Create visual workspa
 
 1. Open Obsidian Settings
 2. Go to Community Plugins and disable Safe Mode
-3. Click Browse and search for "RabbitMap"
+3. Click Browse and search for "Canvas Chat"
 4. Install and enable the plugin
 
 ### Manual Installation
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the latest release
-2. Create a folder `rabbitmap` in your vault's `.obsidian/plugins/` directory
+2. Create a folder `canvas-chat` in your vault's `.obsidian/plugins/` directory
 3. Copy the downloaded files into the folder
 4. Reload Obsidian and enable the plugin
 
 ## Usage
 
-1. Click the RabbitMap icon in the ribbon or use the command palette to create a new canvas
+1. Click the Canvas Chat icon in the ribbon or use the command palette to create a new canvas
 2. Use the toolbar on the left to add Chat or Card nodes
 3. Open Settings (gear icon) to configure your API keys
 4. Start chatting!
@@ -61,15 +65,8 @@ Open the settings modal (gear icon in toolbar) to configure:
 
 ## File Format
 
-RabbitMap files use the `.rabbitmap` extension and store data in JSON format.
-
-## Community
-
-This plugin is part of [rabbitmap.com](https://rabbitmap.com) — a cloud research OS for saving and organizing web content on canvas.
-
-- Follow [@bayradion](https://x.com/bayradion) on X
-- Join our [Discord](https://discord.gg/UeUBkmxEcV)
+Canvas Chat files use the `.canvaschat` extension and store data in JSON format.
 
 ## License
 
-MIT License
+MIT License. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

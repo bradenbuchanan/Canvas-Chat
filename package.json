@@ -1,14 +1,14 @@
 {
-	"name": "rabbitmap",
+	"name": "canvas-chat",
 	"version": "0.1.0",
-	"description": "Milanote-style canvas plugin for Obsidian",
+	"description": "Infinite canvas with AI chat nodes for Obsidian",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "node esbuild.config.mjs production"
 	},
 	"keywords": [],
-	"author": "",
+	"author": "Braden Buchanan",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^20.10.0",
