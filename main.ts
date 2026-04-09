@@ -3067,21 +3067,22 @@ class RabbitMapView extends TextFileView {
 
 		// Normalize baseUrl - remove trailing slash
 		const baseUrl = provider.baseUrl.replace(/\/+$/, "");
-		const response = await fetch(`${baseUrl}/chat/completions`, {
+		const response = await requestUrl({
+			url: `${baseUrl}/chat/completions`,
 			method: "POST",
 			headers,
 			body: JSON.stringify({
 				model: model,
 				messages: apiMessages,
 			}),
+			throw: false,
 		});
 
-		if (!response.ok) {
-			const error = await response.text();
-			throw new Error(`API error: ${response.status} - ${error}`);
+		if (response.status < 200 || response.status >= 300) {
+			throw new Error(`API error: ${response.status} - ${response.text}`);
 		}
 
-		const data = await response.json();
+		const data = response.json;
 		return data.choices[0]?.message?.content || "No response";
 	}
 
@@ -3120,18 +3121,19 @@ class RabbitMapView extends TextFileView {
 
 		// Normalize baseUrl - remove trailing slash and ensure correct path
 		const baseUrl = provider.baseUrl.replace(/\/+$/, "");
-		const response = await fetch(`${baseUrl}/v1/messages`, {
+		const response = await requestUrl({
+			url: `${baseUrl}/v1/messages`,
 			method: "POST",
 			headers,
 			body: JSON.stringify(requestBody),
+			throw: false,
 		});
 
-		if (!response.ok) {
-			const error = await response.text();
-			throw new Error(`Anthropic API error: ${response.status} - ${error}`);
+		if (response.status < 200 || response.status >= 300) {
+			throw new Error(`Anthropic API error: ${response.status} - ${response.text}`);
 		}
 
-		const data = await response.json();
+		const data = response.json;
 		// Anthropic returns content as an array of content blocks
 		if (data.content && Array.isArray(data.content)) {
 			return data.content
@@ -3174,20 +3176,21 @@ class RabbitMapView extends TextFileView {
 		// Normalize baseUrl - remove trailing slash
 		const baseUrl = provider.baseUrl.replace(/\/+$/, "");
 		// Google uses API key as query parameter
-		const response = await fetch(`${baseUrl}/models/${model}:generateContent?key=${apiKey}`, {
+		const response = await requestUrl({
+			url: `${baseUrl}/models/${model}:generateContent?key=${apiKey}`,
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(requestBody),
+			throw: false,
 		});
 
-		if (!response.ok) {
-			const error = await response.text();
-			throw new Error(`Google API error: ${response.status} - ${error}`);
+		if (response.status < 200 || response.status >= 300) {
+			throw new Error(`Google API error: ${response.status} - ${response.text}`);
 		}
 
-		const data = await response.json();
+		const data = response.json;
 		// Google returns candidates array with parts that can be text or inlineData (images)
 		if (data.candidates && data.candidates[0]?.content?.parts) {
 			const parts = data.candidates[0].content.parts;
@@ -4174,29 +4177,6 @@ class SettingsModal extends Modal {
 		contentEl.addClass("rabbitmap-settings-modal");
 
 		contentEl.createEl("h2", { text: "Provider Settings" });
-
-		// About section
-		const aboutSection = contentEl.createDiv({ cls: "rabbitmap-about-section" });
-		aboutSection.createEl("p", {
-			text: "This RabbitMap plugin is part of ",
-		}).createEl("a", {
-			text: "rabbitmap.com",
-			href: "https://rabbitmap.com",
-		});
-		aboutSection.querySelector("p")?.appendText(" — a cloud research OS for saving and organizing web content on canvas.");
-
-		const aboutText = aboutSection.createEl("p");
-		aboutText.appendText("We're building deep integration between web research and LLM context — making context management easy and delightful. Built by ");
-		aboutText.createEl("a", {
-			text: "@bayradion",
-			href: "https://x.com/bayradion",
-		});
-		aboutText.appendText(". Join our ");
-		aboutText.createEl("a", {
-			text: "Discord community",
-			href: "https://discord.gg/UeUBkmxEcV",
-		});
-		aboutText.appendText("!");
 
 		// Providers section
 		const providersContainer = contentEl.createDiv({ cls: "rabbitmap-providers-container" });

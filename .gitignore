@@ -1,11 +1,15 @@
 # Build artifacts
 node_modules/
+main.js
+main.js.map
 
 # Development files
 CLAUDE.md
 .claude/
 .hotreload
 data.json
+docs/internal/
+publishing plan_rabbitMap_toObsidianPlugin.mdx
 
 # IDE
 .idea/
