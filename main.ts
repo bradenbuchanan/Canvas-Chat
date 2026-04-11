@@ -7,130 +7,35 @@ import {
 	TFolder,
 	Notice,
 	Modal,
-	Setting,
 	MarkdownRenderer,
 	Component,
 	requestUrl,
 	setIcon,
 } from "obsidian";
+import {
+	CanvasNode,
+	ChatMessage,
+	Edge,
+	ProviderConfig,
+	PluginSettings,
+	ChatNodeState,
+	CanvasChatData,
+	ChatViewHandle,
+} from "./src/types";
+import {
+	VIEW_TYPE_CANVAS_CHAT,
+	FILE_EXTENSION,
+	DEFAULT_SETTINGS,
+	DEFAULT_SYSTEM_PROMPT,
+	DEFAULT_CONTEXT_TEMPLATE,
+} from "./src/constants";
+import {
+	PromptEditorModal,
+	ExpandedChatModal,
+	SettingsModal,
+} from "./src/modals";
 
-const VIEW_TYPE_RABBITMAP = "rabbitmap-canvas";
-const FILE_EXTENSION = "rabbitmap";
-
-interface CanvasNode {
-	id: string;
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-	type: "card" | "chat" | "link" | "note";
-	content: string;
-	title?: string;
-	filePath?: string;
-	url?: string;
-	linkTitle?: string;
-	linkDescription?: string;
-	linkImage?: string;
-	linkContent?: string;
-	linkType?: "webpage" | "youtube" | "twitter" | "obsidian";
-}
-
-interface ChatMessage {
-	role: "user" | "assistant";
-	content: string;
-	contextFiles?: string[]; // Context files at the time of sending (for user messages)
-	contextNodes?: string[]; // Connected canvas node IDs at the time of sending
-}
-
-interface Edge {
-	id: string;
-	from: string;
-	to: string;
-}
-
-interface ProviderConfig {
-	name: string;
-	baseUrl: string;
-	apiKey: string;
-	models: string[];
-	enabled: boolean;
-	apiFormat: "openai" | "anthropic" | "google";
-}
-
-interface PluginSettings {
-	openaiApiKey: string; // deprecated, kept for migration
-	openrouterApiKey: string; // deprecated, kept for migration
-	customOpenRouterModels: string;
-	providers: ProviderConfig[];
-}
-
-const DEFAULT_SETTINGS: PluginSettings = {
-	openaiApiKey: "",
-	openrouterApiKey: "",
-	customOpenRouterModels: "",
-	providers: [
-		{
-			name: "OpenAI",
-			baseUrl: "https://api.openai.com/v1",
-			apiKey: "",
-			models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-			enabled: true,
-			apiFormat: "openai"
-		},
-		{
-			name: "OpenRouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			apiKey: "",
-			models: ["anthropic/claude-3.5-sonnet", "anthropic/claude-3-opus", "openai/gpt-4o", "google/gemini-pro-1.5"],
-			enabled: true,
-			apiFormat: "openai"
-		},
-		{
-			name: "Anthropic",
-			baseUrl: "https://api.anthropic.com",
-			apiKey: "",
-			models: ["claude-sonnet-4-5", "claude-sonnet-4-5-thinking", "claude-opus-4-5-thinking"],
-			enabled: true,
-			apiFormat: "anthropic"
-		},
-		{
-			name: "Google",
-			baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-			apiKey: "",
-			models: ["gemini-2.5-flash", "gemini-2.5-flash-thinking", "gemini-3-flash", "gemini-3-pro-high", "gemini-3-pro-low"],
-			enabled: true,
-			apiFormat: "google"
-		}
-	]
-};
-
-interface ChatNodeState {
-	provider: string;
-	model: string;
-	contextFiles: string[]; // file paths
-	contextNodes: string[]; // connected canvas node IDs
-	systemPrompt: string;
-	contextTemplate: string; // template for context files
-}
-
-const DEFAULT_CONTEXT_TEMPLATE = `--- {filepath} ---
-{content}`;
-
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant. You help users with their questions and tasks. When context files are provided, use them to give more accurate and relevant answers. Be concise but thorough.`;
-
-interface RabbitMapData {
-	nodes: CanvasNode[];
-	edges: Edge[];
-	chatMessages: Record<string, ChatMessage[]>;
-	chatStates: Record<string, ChatNodeState>;
-	view: {
-		scale: number;
-		panX: number;
-		panY: number;
-	};
-}
-
-class RabbitMapView extends TextFileView {
+class CanvasChatView extends TextFileView implements ChatViewHandle {
 	private canvas: HTMLElement;
 	private nodesContainer: HTMLElement;
 	private nodes: Map<string, CanvasNode> = new Map();
@@ -193,23 +98,23 @@ class RabbitMapView extends TextFileView {
 	private edgeDrawTempLine: SVGLineElement | null = null;
 
 	// Plugin reference
-	plugin: RabbitMapPlugin;
+	plugin: CanvasChatPlugin;
 
 	private isLoaded = false;
 	private isSaving = false;
 	private saveTimeout: number | null = null;
 
-	constructor(leaf: WorkspaceLeaf, plugin: RabbitMapPlugin) {
+	constructor(leaf: WorkspaceLeaf, plugin: CanvasChatPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 	}
 
 	getViewType(): string {
-		return VIEW_TYPE_RABBITMAP;
+		return VIEW_TYPE_CANVAS_CHAT;
 	}
 
 	getDisplayText(): string {
-		return this.file?.basename || "RabbitMap";
+		return this.file?.basename || "Canvas Chat";
 	}
 
 	getIcon(): string {
@@ -218,7 +123,7 @@ class RabbitMapView extends TextFileView {
 
 	// Called by Obsidian to get current data for saving
 	getViewData(): string {
-		const data: RabbitMapData = {
+		const data: CanvasChatData = {
 			nodes: Array.from(this.nodes.values()),
 			edges: Array.from(this.edges.values()),
 			chatMessages: Object.fromEntries(this.chatMessages),
@@ -245,7 +150,7 @@ class RabbitMapView extends TextFileView {
 
 		try {
 			if (data.trim()) {
-				const parsed: RabbitMapData = JSON.parse(data);
+				const parsed: CanvasChatData = JSON.parse(data);
 
 				// Restore view state
 				if (parsed.view) {
@@ -285,7 +190,7 @@ class RabbitMapView extends TextFileView {
 				}
 			}
 		} catch (e) {
-			console.log("Error parsing rabbitmap file:", e);
+			console.log("Error parsing canvas chat file:", e);
 		}
 
 		// If no nodes after loading, add a default chat
@@ -1267,16 +1172,7 @@ class RabbitMapView extends TextFileView {
 		const provider = this.plugin.settings.providers.find(p => p.name === chatState.provider);
 		if (!provider) return;
 
-		// Get API key from provider config (with fallback to legacy fields for migration)
-		let apiKey = provider.apiKey || "";
-		if (!apiKey) {
-			// Fallback to legacy API key fields for backward compatibility
-			if (chatState.provider === "OpenAI" && this.plugin.settings.openaiApiKey) {
-				apiKey = this.plugin.settings.openaiApiKey;
-			} else if (chatState.provider === "OpenRouter" && this.plugin.settings.openrouterApiKey) {
-				apiKey = this.plugin.settings.openrouterApiKey;
-			}
-		}
+		const apiKey = provider.apiKey || "";
 
 		if (!apiKey) {
 			const errorMsg: ChatMessage = {
@@ -2928,14 +2824,7 @@ class RabbitMapView extends TextFileView {
 			const provider = this.plugin.settings.providers.find(p => p.name === chatState.provider);
 			if (!provider) return;
 
-			let apiKey = provider.apiKey || "";
-			if (!apiKey) {
-				if (chatState.provider === "OpenAI" && this.plugin.settings.openaiApiKey) {
-					apiKey = this.plugin.settings.openaiApiKey;
-				} else if (chatState.provider === "OpenRouter" && this.plugin.settings.openrouterApiKey) {
-					apiKey = this.plugin.settings.openrouterApiKey;
-				}
-			}
+			const apiKey = provider.apiKey || "";
 
 			if (!apiKey) {
 				const errorMsg: ChatMessage = {
@@ -3043,7 +2932,7 @@ class RabbitMapView extends TextFileView {
 		// OpenRouter requires additional headers
 		if (provider.name === "OpenRouter") {
 			headers["HTTP-Referer"] = "https://obsidian.md";
-			headers["X-Title"] = "RabbitMap";
+			headers["X-Title"] = "Canvas Chat";
 		}
 
 		// Build messages array with system prompt and context
@@ -3965,443 +3854,27 @@ class RabbitMapView extends TextFileView {
 	}
 }
 
-class PromptEditorModal extends Modal {
-	private prompt: string;
-	private contextTemplate: string;
-	private onSave: (prompt: string, template: string) => void;
-
-	constructor(app: any, prompt: string, contextTemplate: string, onSave: (prompt: string, template: string) => void) {
-		super(app);
-		this.prompt = prompt;
-		this.contextTemplate = contextTemplate;
-		this.onSave = onSave;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-		contentEl.addClass("rabbitmap-prompt-modal");
-
-		// System Prompt section
-		contentEl.createEl("h3", { text: "System Prompt" });
-		const promptTextarea = contentEl.createEl("textarea", {
-			cls: "rabbitmap-prompt-textarea",
-			attr: { placeholder: "Enter system prompt for this chat..." }
-		});
-		promptTextarea.value = this.prompt;
-
-		// Context Template section
-		contentEl.createEl("h3", { text: "Context Template", cls: "rabbitmap-prompt-section-title" });
-		contentEl.createEl("p", {
-			text: "Variables: {filepath}, {filename}, {content}",
-			cls: "rabbitmap-prompt-hint"
-		});
-		const templateTextarea = contentEl.createEl("textarea", {
-			cls: "rabbitmap-prompt-textarea rabbitmap-template-textarea",
-			attr: { placeholder: "Template for each context file..." }
-		});
-		templateTextarea.value = this.contextTemplate;
-
-		// Preview
-		contentEl.createEl("h4", { text: "Preview", cls: "rabbitmap-prompt-section-title" });
-		const preview = contentEl.createDiv({ cls: "rabbitmap-prompt-preview" });
-
-		const updatePreview = () => {
-			const template = templateTextarea.value;
-			const example = template
-				.replace(/\{filepath\}/g, "folder/example.md")
-				.replace(/\{filename\}/g, "example.md")
-				.replace(/\{content\}/g, "File content here...");
-			preview.setText(example);
-		};
-		updatePreview();
-		templateTextarea.addEventListener("input", updatePreview);
-
-		const buttonContainer = contentEl.createDiv({ cls: "rabbitmap-prompt-buttons" });
-
-		const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
-		cancelBtn.onclick = () => this.close();
-
-		const saveBtn = buttonContainer.createEl("button", { text: "Save", cls: "mod-cta" });
-		saveBtn.onclick = () => {
-			this.onSave(promptTextarea.value, templateTextarea.value);
-			this.close();
-		};
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-class ExpandedChatModal extends Modal {
-	private view: RabbitMapView;
-	private nodeId: string;
-	private messagesContainer: HTMLElement;
-	private input: HTMLTextAreaElement;
-	private updateInterval: number;
-
-	constructor(app: any, view: RabbitMapView, nodeId: string) {
-		super(app);
-		this.view = view;
-		this.nodeId = nodeId;
-	}
-
-	onOpen() {
-		const { contentEl, modalEl } = this;
-		modalEl.addClass("rabbitmap-expanded-chat-modal");
-		contentEl.empty();
-
-		const node = this.view.getNode(this.nodeId);
-		const chatState = this.view.getChatState(this.nodeId);
-
-		// Header
-		const header = contentEl.createDiv({ cls: "rabbitmap-expanded-header" });
-		header.createEl("h2", { text: node?.title || "Chat" });
-
-		if (chatState) {
-			header.createEl("span", {
-				text: `${chatState.provider} / ${chatState.model}`,
-				cls: "rabbitmap-expanded-model"
-			});
-		}
-
-		// Messages
-		this.messagesContainer = contentEl.createDiv({ cls: "rabbitmap-expanded-messages" });
-		this.renderMessages();
-
-		// Input area
-		const inputArea = contentEl.createDiv({ cls: "rabbitmap-expanded-input-area" });
-		this.input = inputArea.createEl("textarea", {
-			cls: "rabbitmap-expanded-input",
-			attr: { placeholder: "Type a message...", rows: "3" }
-		});
-
-		const sendBtn = inputArea.createEl("button", {
-			text: "Send",
-			cls: "rabbitmap-expanded-send-btn"
-		});
-
-		sendBtn.onclick = () => this.sendMessage();
-		this.input.addEventListener("keydown", (e) => {
-			if (e.key === "Enter" && !e.shiftKey) {
-				e.preventDefault();
-				this.sendMessage();
-			}
-		});
-
-		// Focus input and scroll to bottom
-		this.input.focus();
-		setTimeout(() => {
-			this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-		}, 50);
-
-		// Sync messages periodically
-		this.updateInterval = window.setInterval(() => {
-			this.renderMessages();
-		}, 500);
-	}
-
-	private renderMessages(showLoading: boolean = false) {
-		const messages = this.view.getChatMessages(this.nodeId) || [];
-		const scrolledToBottom = this.messagesContainer.scrollTop + this.messagesContainer.clientHeight >= this.messagesContainer.scrollHeight - 10;
-
-		this.messagesContainer.empty();
-
-		for (const msg of messages) {
-			const msgEl = this.messagesContainer.createDiv({
-				cls: `rabbitmap-expanded-message rabbitmap-expanded-${msg.role}`
-			});
-
-			if (msg.role === "user" && msg.contextFiles && msg.contextFiles.length > 0) {
-				const contextEl = msgEl.createDiv({ cls: "rabbitmap-expanded-context" });
-				contextEl.createSpan({ text: "Context: " });
-				contextEl.createSpan({ text: msg.contextFiles.map(f => f.split("/").pop()).join(", ") });
-			}
-
-			msgEl.createDiv({ cls: "rabbitmap-expanded-content", text: msg.content });
-		}
-
-		// Show loading indicator
-		if (showLoading) {
-			const loadingEl = this.messagesContainer.createDiv({
-				cls: "rabbitmap-expanded-message rabbitmap-expanded-assistant rabbitmap-expanded-loading"
-			});
-			loadingEl.createDiv({ cls: "rabbitmap-expanded-content", text: "..." });
-		}
-
-		if (scrolledToBottom || showLoading) {
-			this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-		}
-	}
-
-	private async sendMessage() {
-		const text = this.input.value.trim();
-		if (!text) return;
-
-		this.input.value = "";
-		this.input.disabled = true;
-
-		// Show user message + loading
-		this.renderMessages(true);
-
-		await this.view.sendChatMessage(this.nodeId, text);
-
-		this.input.disabled = false;
-		this.input.focus();
-		this.renderMessages();
-		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-	}
-
-	onClose() {
-		if (this.updateInterval) {
-			window.clearInterval(this.updateInterval);
-		}
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-class SettingsModal extends Modal {
-	plugin: RabbitMapPlugin;
-
-	constructor(app: any, plugin: RabbitMapPlugin) {
-		super(app);
-		this.plugin = plugin;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-		contentEl.addClass("rabbitmap-settings-modal");
-
-		contentEl.createEl("h2", { text: "Provider Settings" });
-
-		// Providers section
-		const providersContainer = contentEl.createDiv({ cls: "rabbitmap-providers-container" });
-
-		const renderProviders = () => {
-			providersContainer.empty();
-
-			for (let i = 0; i < this.plugin.settings.providers.length; i++) {
-				const provider = this.plugin.settings.providers[i];
-				const providerSection = providersContainer.createDiv({ cls: "rabbitmap-provider-section" });
-
-				// Provider header with name and toggle
-				const headerRow = providerSection.createDiv({ cls: "rabbitmap-provider-header" });
-				headerRow.createEl("h3", { text: provider.name });
-
-				// Enabled toggle
-				const toggleContainer = headerRow.createDiv({ cls: "rabbitmap-provider-toggle" });
-				const toggleLabel = toggleContainer.createEl("label", { cls: "rabbitmap-toggle-label" });
-				const toggleInput = toggleLabel.createEl("input", { type: "checkbox" });
-				toggleInput.checked = provider.enabled;
-				toggleLabel.createSpan({ text: provider.enabled ? "Enabled" : "Disabled" });
-				toggleInput.onchange = async () => {
-					provider.enabled = toggleInput.checked;
-					toggleLabel.querySelector("span")!.textContent = provider.enabled ? "Enabled" : "Disabled";
-					await this.plugin.saveSettings();
-				};
-
-				// Base URL setting
-				new Setting(providerSection)
-					.setName("Base URL")
-					.setDesc("API endpoint URL (change for custom/proxy deployments)")
-					.addText((text) =>
-						text
-							.setPlaceholder("https://api.example.com/v1")
-							.setValue(provider.baseUrl)
-							.onChange(async (value) => {
-								provider.baseUrl = value;
-								await this.plugin.saveSettings();
-							})
-					);
-
-				// API Key setting
-				new Setting(providerSection)
-					.setName("API Key")
-					.setDesc(`Enter your ${provider.name} API key`)
-					.addText((text) =>
-						text
-							.setPlaceholder("sk-...")
-							.setValue(provider.apiKey)
-							.onChange(async (value) => {
-								provider.apiKey = value;
-								await this.plugin.saveSettings();
-							})
-					);
-
-				// API Format setting
-				new Setting(providerSection)
-					.setName("API Format")
-					.setDesc("Select the API format for this provider")
-					.addDropdown((dropdown) =>
-						dropdown
-							.addOption("openai", "OpenAI Compatible")
-							.addOption("anthropic", "Anthropic (Claude)")
-							.addOption("google", "Google (Gemini)")
-							.setValue(provider.apiFormat || "openai")
-							.onChange(async (value) => {
-								provider.apiFormat = value as "openai" | "anthropic" | "google";
-								await this.plugin.saveSettings();
-							})
-					);
-
-				// Models section
-				const modelsHeader = providerSection.createDiv({ cls: "rabbitmap-models-header" });
-				modelsHeader.createEl("h4", { text: "Models" });
-
-				// Models input row
-				const inputRow = providerSection.createDiv({ cls: "rabbitmap-models-input-row" });
-				const modelInput = inputRow.createEl("input", {
-					type: "text",
-					placeholder: "e.g. gpt-4o or anthropic/claude-3.5-sonnet",
-					cls: "rabbitmap-models-input"
-				});
-				const addButton = inputRow.createEl("button", {
-					text: "Add",
-					cls: "rabbitmap-models-add-btn"
-				});
-
-				// Models list
-				const modelsList = providerSection.createDiv({ cls: "rabbitmap-models-list" });
-
-				const renderModelsList = () => {
-					modelsList.empty();
-					if (provider.models.length === 0) {
-						modelsList.createEl("div", {
-							text: "No models configured.",
-							cls: "rabbitmap-models-empty"
-						});
-						return;
-					}
-
-					for (const model of provider.models) {
-						const item = modelsList.createDiv({ cls: "rabbitmap-models-item" });
-						item.createSpan({ text: model, cls: "rabbitmap-models-name" });
-						const removeBtn = item.createEl("button", {
-							text: "×",
-							cls: "rabbitmap-models-remove-btn"
-						});
-						removeBtn.onclick = async () => {
-							provider.models = provider.models.filter(m => m !== model);
-							await this.plugin.saveSettings();
-							renderModelsList();
-						};
-					}
-				};
-
-				addButton.onclick = async () => {
-					const newModel = modelInput.value.trim();
-					if (!newModel) return;
-					if (!provider.models.includes(newModel)) {
-						provider.models.push(newModel);
-						await this.plugin.saveSettings();
-					}
-					modelInput.value = "";
-					renderModelsList();
-				};
-
-				modelInput.onkeydown = (e) => {
-					if (e.key === "Enter") {
-						e.preventDefault();
-						addButton.click();
-					}
-				};
-
-				renderModelsList();
-			}
-
-			// Add new provider button
-			const addProviderRow = providersContainer.createDiv({ cls: "rabbitmap-add-provider-row" });
-			const newProviderInput = addProviderRow.createEl("input", {
-				type: "text",
-				placeholder: "New provider name (e.g. Ollama)",
-				cls: "rabbitmap-new-provider-input"
-			});
-			const addProviderBtn = addProviderRow.createEl("button", {
-				text: "Add Provider",
-				cls: "rabbitmap-add-provider-btn"
-			});
-
-			addProviderBtn.onclick = async () => {
-				const name = newProviderInput.value.trim();
-				if (!name) return;
-				if (this.plugin.settings.providers.some(p => p.name === name)) {
-					new Notice(`Provider "${name}" already exists.`);
-					return;
-				}
-				this.plugin.settings.providers.push({
-					name,
-					baseUrl: "https://api.example.com/v1",
-					apiKey: "",
-					models: [],
-					enabled: true
-				});
-				await this.plugin.saveSettings();
-				newProviderInput.value = "";
-				renderProviders();
-			};
-		};
-
-		renderProviders();
-
-		// Help links
-		contentEl.createEl("p", {
-			text: "Get your API keys from:",
-			cls: "rabbitmap-settings-info",
-		});
-
-		const linkContainer = contentEl.createDiv({ cls: "rabbitmap-settings-links" });
-		linkContainer.createEl("a", {
-			text: "OpenAI Platform",
-			href: "https://platform.openai.com/api-keys",
-		});
-		linkContainer.createEl("span", { text: " | " });
-		linkContainer.createEl("a", {
-			text: "OpenRouter",
-			href: "https://openrouter.ai/keys",
-		});
-		linkContainer.createEl("span", { text: " | " });
-		linkContainer.createEl("a", {
-			text: "Google AI Studio",
-			href: "https://aistudio.google.com/apikey",
-		});
-		linkContainer.createEl("span", { text: " | " });
-		linkContainer.createEl("a", {
-			text: "Anthropic Console",
-			href: "https://console.anthropic.com/settings/keys",
-		});
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-export default class RabbitMapPlugin extends Plugin {
+export default class CanvasChatPlugin extends Plugin {
 	settings: PluginSettings;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
 		// Register the view
-		this.registerView(VIEW_TYPE_RABBITMAP, (leaf) => new RabbitMapView(leaf, this));
+		this.registerView(VIEW_TYPE_CANVAS_CHAT, (leaf) => new CanvasChatView(leaf, this));
 
 		// Register file extension
-		this.registerExtensions([FILE_EXTENSION], VIEW_TYPE_RABBITMAP);
+		this.registerExtensions([FILE_EXTENSION], VIEW_TYPE_CANVAS_CHAT);
 
 		// Add ribbon icon
-		this.addRibbonIcon("layout-dashboard", "Create new RabbitMap", async () => {
+		this.addRibbonIcon("layout-dashboard", "Create new Canvas Chat", async () => {
 			await this.createNewCanvas();
 		});
 
 		// Add command to create new canvas
 		this.addCommand({
-			id: "create-new-rabbitmap",
-			name: "Create new RabbitMap canvas",
+			id: "create-new-canvas-chat",
+			name: "Create new Canvas Chat canvas",
 			callback: async () => {
 				await this.createNewCanvas();
 			},
@@ -4412,7 +3885,7 @@ export default class RabbitMapPlugin extends Plugin {
 			this.app.workspace.on("file-menu", (menu: Menu, file) => {
 				if (file instanceof TFolder) {
 					menu.addItem((item) => {
-						item.setTitle("New RabbitMap")
+						item.setTitle("New Canvas Chat")
 							.setIcon("layout-dashboard")
 							.onClick(async () => {
 								await this.createNewCanvas(file.path);
@@ -4437,7 +3910,7 @@ export default class RabbitMapPlugin extends Plugin {
 		}
 
 		// Create file with empty data structure
-		const initialData: RabbitMapData = {
+		const initialData: CanvasChatData = {
 			nodes: [],
 			edges: [],
 			chatMessages: {},
