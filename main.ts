@@ -16,12 +16,12 @@ import {
 	CanvasNode,
 	ChatMessage,
 	Edge,
-	ProviderConfig,
 	PluginSettings,
 	ChatNodeState,
 	CanvasChatData,
 	ChatViewHandle,
 } from "./src/types";
+import { callLLM } from "./src/llm";
 import {
 	VIEW_TYPE_CANVAS_CHAT,
 	FILE_EXTENSION,
@@ -1219,7 +1219,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 
 		try {
-			const response = await this.callLLM(provider, apiKey, chatState.model, messages, contextContent, chatState.systemPrompt || "");
+			const response = await callLLM(provider, apiKey, chatState.model, messages, contextContent, chatState.systemPrompt || "");
 			const assistantMsg: ChatMessage = {
 				role: "assistant",
 				content: response,
@@ -2876,7 +2876,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 			}
 
 			try {
-				const response = await this.callLLM(provider, apiKey, chatState.model, messages, contextContent, chatState.systemPrompt || "");
+				const response = await callLLM(provider, apiKey, chatState.model, messages, contextContent, chatState.systemPrompt || "");
 				loadingEl.remove();
 
 				const assistantMsg: ChatMessage = {
@@ -2907,199 +2907,6 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 				sendMessage();
 			}
 		});
-	}
-
-	private async callLLM(provider: ProviderConfig, apiKey: string, model: string, messages: ChatMessage[], context: string = "", systemPrompt: string = ""): Promise<string> {
-		const apiFormat = provider.apiFormat || "openai";
-
-		switch (apiFormat) {
-			case "anthropic":
-				return this.callAnthropicAPI(provider, apiKey, model, messages, context, systemPrompt);
-			case "google":
-				return this.callGoogleAPI(provider, apiKey, model, messages, context, systemPrompt);
-			case "openai":
-			default:
-				return this.callOpenAIAPI(provider, apiKey, model, messages, context, systemPrompt);
-		}
-	}
-
-	private async callOpenAIAPI(provider: ProviderConfig, apiKey: string, model: string, messages: ChatMessage[], context: string, systemPrompt: string): Promise<string> {
-		const headers: Record<string, string> = {
-			"Content-Type": "application/json",
-			"Authorization": `Bearer ${apiKey}`,
-		};
-
-		// OpenRouter requires additional headers
-		if (provider.name === "OpenRouter") {
-			headers["HTTP-Referer"] = "https://obsidian.md";
-			headers["X-Title"] = "Canvas Chat";
-		}
-
-		// Build messages array with system prompt and context
-		const apiMessages: { role: string; content: string }[] = [];
-
-		// Combine system prompt and context
-		const systemParts: string[] = [];
-		if (systemPrompt) {
-			systemParts.push(systemPrompt);
-		}
-		if (context) {
-			systemParts.push(context);
-		}
-		if (systemParts.length > 0) {
-			apiMessages.push({ role: "system", content: systemParts.join("\n\n") });
-		}
-
-		for (const m of messages) {
-			apiMessages.push({ role: m.role, content: m.content });
-		}
-
-		// Normalize baseUrl - remove trailing slash
-		const baseUrl = provider.baseUrl.replace(/\/+$/, "");
-		const response = await requestUrl({
-			url: `${baseUrl}/chat/completions`,
-			method: "POST",
-			headers,
-			body: JSON.stringify({
-				model: model,
-				messages: apiMessages,
-			}),
-			throw: false,
-		});
-
-		if (response.status < 200 || response.status >= 300) {
-			throw new Error(`API error: ${response.status} - ${response.text}`);
-		}
-
-		const data = response.json;
-		return data.choices[0]?.message?.content || "No response";
-	}
-
-	private async callAnthropicAPI(provider: ProviderConfig, apiKey: string, model: string, messages: ChatMessage[], context: string, systemPrompt: string): Promise<string> {
-		const headers: Record<string, string> = {
-			"Content-Type": "application/json",
-			"x-api-key": apiKey,
-			"anthropic-version": "2023-06-01",
-			"anthropic-dangerous-direct-browser-access": "true",
-		};
-
-		// Build system prompt
-		const systemParts: string[] = [];
-		if (systemPrompt) {
-			systemParts.push(systemPrompt);
-		}
-		if (context) {
-			systemParts.push(context);
-		}
-
-		// Build messages array (Anthropic format)
-		const apiMessages: { role: string; content: string }[] = [];
-		for (const m of messages) {
-			apiMessages.push({ role: m.role, content: m.content });
-		}
-
-		const requestBody: Record<string, unknown> = {
-			model: model,
-			max_tokens: 4096,
-			messages: apiMessages,
-		};
-
-		if (systemParts.length > 0) {
-			requestBody.system = systemParts.join("\n\n");
-		}
-
-		// Normalize baseUrl - remove trailing slash and ensure correct path
-		const baseUrl = provider.baseUrl.replace(/\/+$/, "");
-		const response = await requestUrl({
-			url: `${baseUrl}/v1/messages`,
-			method: "POST",
-			headers,
-			body: JSON.stringify(requestBody),
-			throw: false,
-		});
-
-		if (response.status < 200 || response.status >= 300) {
-			throw new Error(`Anthropic API error: ${response.status} - ${response.text}`);
-		}
-
-		const data = response.json;
-		// Anthropic returns content as an array of content blocks
-		if (data.content && Array.isArray(data.content)) {
-			return data.content
-				.filter((block: { type: string }) => block.type === "text")
-				.map((block: { text: string }) => block.text)
-				.join("");
-		}
-		return "No response";
-	}
-
-	private async callGoogleAPI(provider: ProviderConfig, apiKey: string, model: string, messages: ChatMessage[], context: string, systemPrompt: string): Promise<string> {
-		// Build system instruction
-		const systemParts: string[] = [];
-		if (systemPrompt) {
-			systemParts.push(systemPrompt);
-		}
-		if (context) {
-			systemParts.push(context);
-		}
-
-		// Build contents array (Google Gemini format)
-		const contents: { role: string; parts: { text: string }[] }[] = [];
-		for (const m of messages) {
-			contents.push({
-				role: m.role === "assistant" ? "model" : "user",
-				parts: [{ text: m.content }]
-			});
-		}
-
-		const requestBody: Record<string, unknown> = {
-			contents: contents,
-		};
-
-		if (systemParts.length > 0) {
-			requestBody.systemInstruction = {
-				parts: [{ text: systemParts.join("\n\n") }]
-			};
-		}
-
-		// Normalize baseUrl - remove trailing slash
-		const baseUrl = provider.baseUrl.replace(/\/+$/, "");
-		// Google uses API key as query parameter
-		const response = await requestUrl({
-			url: `${baseUrl}/models/${model}:generateContent?key=${apiKey}`,
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(requestBody),
-			throw: false,
-		});
-
-		if (response.status < 200 || response.status >= 300) {
-			throw new Error(`Google API error: ${response.status} - ${response.text}`);
-		}
-
-		const data = response.json;
-		// Google returns candidates array with parts that can be text or inlineData (images)
-		if (data.candidates && data.candidates[0]?.content?.parts) {
-			const parts = data.candidates[0].content.parts;
-			const resultParts: string[] = [];
-
-			for (const part of parts) {
-				if (part.text) {
-					// Text content
-					resultParts.push(part.text);
-				} else if (part.inlineData) {
-					// Image content - convert to Markdown data URL
-					const { mimeType, data: base64Data } = part.inlineData;
-					const dataUrl = `data:${mimeType};base64,${base64Data}`;
-					resultParts.push(`\n\n![Generated Image](${dataUrl})\n\n`);
-				}
-			}
-
-			return resultParts.join("") || "No response";
-		}
-		return "No response";
 	}
 
 	private renderChatMessage(container: HTMLElement, msg: ChatMessage, nodeId: string, msgIndex: number): void {
