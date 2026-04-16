@@ -32,77 +32,82 @@ import {
 import {
 	PromptEditorModal,
 	ExpandedChatModal,
-	SettingsModal,
 } from "./src/modals";
+import {
+	createMinimap,
+	updateMinimap,
+	createToolbar,
+	setupEventListeners,
+} from "./src/view";
 
-class CanvasChatView extends TextFileView implements ChatViewHandle {
-	private canvas: HTMLElement;
-	private nodesContainer: HTMLElement;
-	private nodes: Map<string, CanvasNode> = new Map();
-	private nodeElements: Map<string, HTMLElement> = new Map();
+export class CanvasChatView extends TextFileView implements ChatViewHandle {
+	canvas: HTMLElement;
+	nodesContainer: HTMLElement;
+	nodes: Map<string, CanvasNode> = new Map();
+	nodeElements: Map<string, HTMLElement> = new Map();
 
 	// Canvas transform state
-	private scale = 1;
-	private panX = 0;
-	private panY = 0;
+	scale = 1;
+	panX = 0;
+	panY = 0;
 
 	// Interaction state
-	private isPanning = false;
-	private panStartX = 0;
-	private panStartY = 0;
-	private spacePressed = false;
+	isPanning = false;
+	panStartX = 0;
+	panStartY = 0;
+	spacePressed = false;
 
 	// Drag state
-	private draggedNode: string | null = null;
-	private dragOffsetX = 0;
-	private dragOffsetY = 0;
+	draggedNode: string | null = null;
+	dragOffsetX = 0;
+	dragOffsetY = 0;
 
 	// Resize state
-	private resizingNode: string | null = null;
-	private resizeStartWidth = 0;
-	private resizeStartHeight = 0;
-	private resizeStartX = 0;
-	private resizeStartY = 0;
+	resizingNode: string | null = null;
+	resizeStartWidth = 0;
+	resizeStartHeight = 0;
+	resizeStartX = 0;
+	resizeStartY = 0;
 
 	// Active context menu (prevent overlapping menus)
-	private activeMenu: Menu | null = null;
+	activeMenu: Menu | null = null;
 
 	// Selection state
-	private selectedNodes: Set<string> = new Set();
-	private isSelecting = false;
-	private selectionBox: HTMLElement | null = null;
-	private selectionStartX = 0;
-	private selectionStartY = 0;
-	private dragStartPositions: Map<string, { x: number; y: number }> = new Map();
-	private dragStartMouseX = 0;
-	private dragStartMouseY = 0;
+	selectedNodes: Set<string> = new Set();
+	isSelecting = false;
+	selectionBox: HTMLElement | null = null;
+	selectionStartX = 0;
+	selectionStartY = 0;
+	dragStartPositions: Map<string, { x: number; y: number }> = new Map();
+	dragStartMouseX = 0;
+	dragStartMouseY = 0;
 
 	// Minimap
-	private minimap: HTMLElement;
-	private minimapContent: HTMLElement;
-	private minimapViewport: HTMLElement;
-	private minimapNodes: Map<string, HTMLElement> = new Map();
+	minimap: HTMLElement;
+	minimapContent: HTMLElement;
+	minimapViewport: HTMLElement;
+	minimapNodes: Map<string, HTMLElement> = new Map();
 
 	// Chat state
-	private chatMessages: Map<string, ChatMessage[]> = new Map();
-	private chatStates: Map<string, ChatNodeState> = new Map();
+	chatMessages: Map<string, ChatMessage[]> = new Map();
+	chatStates: Map<string, ChatNodeState> = new Map();
 
 	// Edges
-	private edges: Map<string, Edge> = new Map();
-	private edgesContainer: SVGSVGElement;
+	edges: Map<string, Edge> = new Map();
+	edgesContainer: SVGSVGElement;
 
 	// Edge drawing state
-	private isDrawingEdge = false;
-	private edgeDrawFromNode: string | null = null;
-	private edgeDrawFromSide: "top" | "right" | "bottom" | "left" | null = null;
-	private edgeDrawTempLine: SVGLineElement | null = null;
+	isDrawingEdge = false;
+	edgeDrawFromNode: string | null = null;
+	edgeDrawFromSide: "top" | "right" | "bottom" | "left" | null = null;
+	edgeDrawTempLine: SVGLineElement | null = null;
 
 	// Plugin reference
 	plugin: CanvasChatPlugin;
 
-	private isLoaded = false;
-	private isSaving = false;
-	private saveTimeout: number | null = null;
+	isLoaded = false;
+	isSaving = false;
+	saveTimeout: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: CanvasChatPlugin) {
 		super(leaf);
@@ -245,18 +250,18 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.selectionBox.style.display = "none";
 
 		// Create toolbar
-		this.createToolbar(container);
+		createToolbar(this, container);
 
 		// Create minimap
-		this.createMinimap(container);
+		createMinimap(this, container);
 
 		// Setup event listeners
-		this.setupEventListeners();
+		setupEventListeners(this);
 
 		this.updateTransform();
 	}
 
-	private triggerSave(): void {
+	triggerSave(): void {
 		if (!this.isLoaded || !this.file) return;
 
 		// Debounce saves
@@ -276,498 +281,8 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}, 300);
 	}
 
-	private createMinimap(container: Element): void {
-		this.minimap = container.createDiv({ cls: "rabbitmap-minimap" });
-		this.minimapContent = this.minimap.createDiv({ cls: "rabbitmap-minimap-content" });
-		this.minimapViewport = this.minimap.createDiv({ cls: "rabbitmap-minimap-viewport" });
 
-		// Click on minimap to navigate
-		this.minimap.addEventListener("mousedown", (e) => {
-			e.preventDefault();
-			this.navigateFromMinimap(e);
-		});
-
-		this.minimap.addEventListener("mousemove", (e) => {
-			if (e.buttons === 1) {
-				this.navigateFromMinimap(e);
-			}
-		});
-	}
-
-	private navigateFromMinimap(e: MouseEvent): void {
-		const bounds = this.getContentBounds();
-		if (!bounds) return;
-
-		const rect = this.minimap.getBoundingClientRect();
-		const canvasRect = this.canvas.getBoundingClientRect();
-
-		// Click position relative to minimap
-		const clickX = e.clientX - rect.left;
-		const clickY = e.clientY - rect.top;
-
-		// Minimap dimensions
-		const minimapWidth = rect.width;
-		const minimapHeight = rect.height;
-
-		// Content bounds with padding
-		const padding = 50;
-		const contentWidth = bounds.maxX - bounds.minX + padding * 2;
-		const contentHeight = bounds.maxY - bounds.minY + padding * 2;
-
-		// Scale from minimap to canvas
-		const minimapScale = Math.min(minimapWidth / contentWidth, minimapHeight / contentHeight);
-
-		// Offset for centering content in minimap
-		const contentScaledWidth = contentWidth * minimapScale;
-		const contentScaledHeight = contentHeight * minimapScale;
-		const offsetX = (minimapWidth - contentScaledWidth) / 2;
-		const offsetY = (minimapHeight - contentScaledHeight) / 2;
-
-		// Convert click to canvas coordinates
-		const canvasX = (clickX - offsetX) / minimapScale + bounds.minX - padding;
-		const canvasY = (clickY - offsetY) / minimapScale + bounds.minY - padding;
-
-		// Center view on clicked point
-		this.panX = canvasRect.width / 2 - canvasX * this.scale;
-		this.panY = canvasRect.height / 2 - canvasY * this.scale;
-
-		// Clamp pan
-		const clamped = this.clampPan(this.panX, this.panY);
-		this.panX = clamped.x;
-		this.panY = clamped.y;
-
-		this.updateTransform();
-		this.triggerSave();
-	}
-
-	private updateMinimap(): void {
-		if (!this.minimap) return;
-
-		const bounds = this.getContentBounds();
-		if (!bounds) {
-			this.minimapViewport.style.display = "none";
-			return;
-		}
-
-		const canvasRect = this.canvas.getBoundingClientRect();
-		const minimapRect = this.minimap.getBoundingClientRect();
-
-		// Content bounds with padding
-		const padding = 50;
-		const contentMinX = bounds.minX - padding;
-		const contentMinY = bounds.minY - padding;
-		const contentWidth = bounds.maxX - bounds.minX + padding * 2;
-		const contentHeight = bounds.maxY - bounds.minY + padding * 2;
-
-		// Scale to fit in minimap
-		const minimapScale = Math.min(
-			minimapRect.width / contentWidth,
-			minimapRect.height / contentHeight
-		);
-
-		// Offset for centering
-		const contentScaledWidth = contentWidth * minimapScale;
-		const contentScaledHeight = contentHeight * minimapScale;
-		const offsetX = (minimapRect.width - contentScaledWidth) / 2;
-		const offsetY = (minimapRect.height - contentScaledHeight) / 2;
-
-		// Update minimap nodes
-		for (const [nodeId, node] of this.nodes) {
-			let minimapNode = this.minimapNodes.get(nodeId);
-			if (!minimapNode) {
-				minimapNode = this.minimapContent.createDiv({ cls: "rabbitmap-minimap-node" });
-				if (node.type === "chat") {
-					minimapNode.addClass("rabbitmap-minimap-node-chat");
-				} else if (node.type === "link") {
-					minimapNode.addClass("rabbitmap-minimap-node-link");
-				} else if (node.type === "note") {
-					minimapNode.addClass("rabbitmap-minimap-node-note");
-				}
-				this.minimapNodes.set(nodeId, minimapNode);
-			}
-
-			minimapNode.style.left = `${offsetX + (node.x - contentMinX) * minimapScale}px`;
-			minimapNode.style.top = `${offsetY + (node.y - contentMinY) * minimapScale}px`;
-			minimapNode.style.width = `${node.width * minimapScale}px`;
-			minimapNode.style.height = `${node.height * minimapScale}px`;
-		}
-
-		// Remove deleted nodes from minimap
-		for (const [nodeId, el] of this.minimapNodes) {
-			if (!this.nodes.has(nodeId)) {
-				el.remove();
-				this.minimapNodes.delete(nodeId);
-			}
-		}
-
-		// Update viewport indicator
-		this.minimapViewport.style.display = "block";
-		const viewLeft = (-this.panX / this.scale - contentMinX) * minimapScale + offsetX;
-		const viewTop = (-this.panY / this.scale - contentMinY) * minimapScale + offsetY;
-		const viewWidth = (canvasRect.width / this.scale) * minimapScale;
-		const viewHeight = (canvasRect.height / this.scale) * minimapScale;
-
-		this.minimapViewport.style.left = `${viewLeft}px`;
-		this.minimapViewport.style.top = `${viewTop}px`;
-		this.minimapViewport.style.width = `${viewWidth}px`;
-		this.minimapViewport.style.height = `${viewHeight}px`;
-	}
-
-	private createToolbar(container: Element): void {
-		const toolbar = container.createDiv({ cls: "rabbitmap-toolbar" });
-
-		// Add elements button
-		const addCardBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Add Card" } });
-		addCardBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`;
-		addCardBtn.onclick = () => this.addCardAtCenter();
-
-		const addChatBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Add Chat" } });
-		addChatBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
-		addChatBtn.onclick = () => this.addChatAtCenter();
-
-		const addLinkBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Add Link" } });
-		addLinkBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
-		addLinkBtn.onclick = () => this.showAddLinkModal();
-
-		// Separator
-		toolbar.createDiv({ cls: "rabbitmap-toolbar-separator" });
-
-		// Settings button
-		const settingsBtn = toolbar.createEl("button", { cls: "rabbitmap-btn rabbitmap-btn-icon", attr: { title: "Settings" } });
-		settingsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
-		settingsBtn.onclick = () => this.openSettings();
-	}
-
-	private openSettings(): void {
-		new SettingsModal(this.app, this.plugin).open();
-	}
-
-	private setupEventListeners(): void {
-		// Mouse wheel / trackpad handling
-		this.canvas.addEventListener("wheel", (e) => {
-			e.preventDefault();
-
-			// Pinch to zoom (ctrlKey is set for pinch gestures on trackpad)
-			if (e.ctrlKey || e.metaKey) {
-				const delta = -e.deltaY * 0.01; // Slower zoom
-				this.zoomAtPoint(delta, e.clientX, e.clientY);
-			} else {
-				// Two-finger scroll = pan
-				let newPanX = this.panX - e.deltaX;
-				let newPanY = this.panY - e.deltaY;
-
-				// Clamp pan to keep content visible
-				const clamped = this.clampPan(newPanX, newPanY);
-				this.panX = clamped.x;
-				this.panY = clamped.y;
-				this.updateTransform();
-				this.triggerSave();
-			}
-		});
-
-		// Pan with middle mouse or space + left mouse, or start selection
-		this.canvas.addEventListener("mousedown", (e) => {
-			if (e.button === 1 || (e.button === 0 && this.spacePressed)) {
-				// Panning
-				e.preventDefault();
-				this.isPanning = true;
-				this.panStartX = e.clientX - this.panX;
-				this.panStartY = e.clientY - this.panY;
-				this.canvas.addClass("panning");
-			} else if (e.button === 0 && e.target === this.canvas) {
-				// Start selection box (only if clicking on canvas itself, not on nodes)
-				e.preventDefault();
-				this.isSelecting = true;
-				const rect = this.canvas.getBoundingClientRect();
-				this.selectionStartX = e.clientX - rect.left;
-				this.selectionStartY = e.clientY - rect.top;
-
-				if (this.selectionBox) {
-					this.selectionBox.style.left = `${this.selectionStartX}px`;
-					this.selectionBox.style.top = `${this.selectionStartY}px`;
-					this.selectionBox.style.width = "0px";
-					this.selectionBox.style.height = "0px";
-					this.selectionBox.style.display = "block";
-				}
-
-				// Clear selection if not holding shift
-				if (!e.shiftKey) {
-					this.clearSelection();
-				}
-			}
-		});
-
-		document.addEventListener("mousemove", (e) => {
-			if (this.isPanning) {
-				let newPanX = e.clientX - this.panStartX;
-				let newPanY = e.clientY - this.panStartY;
-
-				// Clamp pan to keep content visible
-				const clamped = this.clampPan(newPanX, newPanY);
-				this.panX = clamped.x;
-				this.panY = clamped.y;
-				this.updateTransform();
-			} else if (this.isSelecting && this.selectionBox) {
-				// Update selection box
-				const rect = this.canvas.getBoundingClientRect();
-				const currentX = e.clientX - rect.left;
-				const currentY = e.clientY - rect.top;
-
-				const left = Math.min(this.selectionStartX, currentX);
-				const top = Math.min(this.selectionStartY, currentY);
-				const width = Math.abs(currentX - this.selectionStartX);
-				const height = Math.abs(currentY - this.selectionStartY);
-
-				this.selectionBox.style.left = `${left}px`;
-				this.selectionBox.style.top = `${top}px`;
-				this.selectionBox.style.width = `${width}px`;
-				this.selectionBox.style.height = `${height}px`;
-
-				// Update selection based on intersection
-				this.updateSelectionFromBox(left, top, width, height);
-			} else if (this.isDrawingEdge && this.edgeDrawTempLine) {
-				const rect = this.canvas.getBoundingClientRect();
-				const canvasX = (e.clientX - rect.left - this.panX) / this.scale;
-				const canvasY = (e.clientY - rect.top - this.panY) / this.scale;
-				this.edgeDrawTempLine.setAttribute("x2", String(canvasX));
-				this.edgeDrawTempLine.setAttribute("y2", String(canvasY));
-			} else if (this.draggedNode) {
-				const rect = this.canvas.getBoundingClientRect();
-				const mouseX = (e.clientX - rect.left - this.panX) / this.scale;
-				const mouseY = (e.clientY - rect.top - this.panY) / this.scale;
-
-				// If dragging a selected node, move all selected nodes
-				if (this.selectedNodes.has(this.draggedNode) && this.selectedNodes.size > 0) {
-					const deltaX = mouseX - this.dragStartMouseX;
-					const deltaY = mouseY - this.dragStartMouseY;
-
-					for (const nodeId of this.selectedNodes) {
-						const startPos = this.dragStartPositions.get(nodeId);
-						if (startPos) {
-							this.updateNodePosition(nodeId, startPos.x + deltaX, startPos.y + deltaY);
-						}
-					}
-				} else {
-					const x = mouseX - this.dragOffsetX;
-					const y = mouseY - this.dragOffsetY;
-					this.updateNodePosition(this.draggedNode, x, y);
-				}
-
-				// Visual feedback: highlight chat nodes when dragging a non-chat node over them
-				const draggedNodeData = this.nodes.get(this.draggedNode);
-				if (draggedNodeData && draggedNodeData.type !== "chat") {
-					const dragCenterX = draggedNodeData.x + draggedNodeData.width / 2;
-					const dragCenterY = draggedNodeData.y + draggedNodeData.height / 2;
-					for (const [id, n] of this.nodes) {
-						const el = this.nodeElements.get(id);
-						if (!el || n.type !== "chat" || id === this.draggedNode) continue;
-						const inside = dragCenterX >= n.x && dragCenterX <= n.x + n.width &&
-							dragCenterY >= n.y && dragCenterY <= n.y + n.height;
-						el.toggleClass("rabbitmap-drop-target", inside);
-					}
-				}
-			} else if (this.resizingNode) {
-				const deltaX = (e.clientX - this.resizeStartX) / this.scale;
-				const deltaY = (e.clientY - this.resizeStartY) / this.scale;
-				const newWidth = Math.max(200, this.resizeStartWidth + deltaX);
-				const newHeight = Math.max(150, this.resizeStartHeight + deltaY);
-				this.updateNodeSize(this.resizingNode, newWidth, newHeight);
-			}
-		});
-
-		document.addEventListener("mouseup", (e) => {
-			// Edge drawing completion
-			if (this.isDrawingEdge) {
-				const targetInfo = this.findTargetHandle(e);
-				if (targetInfo && targetInfo.nodeId !== this.edgeDrawFromNode) {
-					// Check for duplicate edges
-					const duplicate = Array.from(this.edges.values()).some(
-						(edge) =>
-							(edge.from === this.edgeDrawFromNode && edge.to === targetInfo.nodeId) ||
-							(edge.from === targetInfo.nodeId && edge.to === this.edgeDrawFromNode)
-					);
-					if (!duplicate) {
-						this.addEdge(this.edgeDrawFromNode!, targetInfo.nodeId);
-						this.triggerSave();
-					}
-				}
-				// Cleanup
-				if (this.edgeDrawTempLine) {
-					this.edgeDrawTempLine.remove();
-					this.edgeDrawTempLine = null;
-				}
-				this.isDrawingEdge = false;
-				this.edgeDrawFromNode = null;
-				this.edgeDrawFromSide = null;
-				this.canvas.removeClass("drawing-edge");
-				return;
-			}
-
-			if (this.isPanning || this.draggedNode || this.resizingNode) {
-				this.triggerSave();
-			}
-
-			// Drag-to-contextualize: detect non-chat node dropped onto chat node
-			if (this.draggedNode) {
-				const draggedNodeData = this.nodes.get(this.draggedNode);
-				if (draggedNodeData && draggedNodeData.type !== "chat") {
-					const dragCenterX = draggedNodeData.x + draggedNodeData.width / 2;
-					const dragCenterY = draggedNodeData.y + draggedNodeData.height / 2;
-					for (const [id, n] of this.nodes) {
-						if (n.type !== "chat" || id === this.draggedNode) continue;
-						const inside = dragCenterX >= n.x && dragCenterX <= n.x + n.width &&
-							dragCenterY >= n.y && dragCenterY <= n.y + n.height;
-						if (inside) {
-							const chatState = this.chatStates.get(id);
-							if (chatState) {
-								if (!chatState.contextNodes) chatState.contextNodes = [];
-								if (!chatState.contextNodes.includes(this.draggedNode)) {
-									chatState.contextNodes.push(this.draggedNode);
-									this.chatStates.set(id, chatState);
-
-									// Add edge if not already connected
-									const hasEdge = Array.from(this.edges.values()).some(
-										edge => (edge.from === id && edge.to === this.draggedNode) ||
-											(edge.from === this.draggedNode && edge.to === id)
-									);
-									if (!hasEdge) {
-										this.addEdge(id, this.draggedNode);
-									}
-
-									// Re-render chat node to show new context
-									const nodeEl = this.nodeElements.get(id);
-									if (nodeEl) {
-										const content = nodeEl.querySelector(".rabbitmap-node-content");
-										if (content) {
-											content.empty();
-											this.renderChatContent(id, content as HTMLElement);
-										}
-									}
-
-									new Notice("Added to chat context");
-									this.triggerSave();
-								}
-							}
-							break;
-						}
-					}
-				}
-
-				// Clear drop target highlights
-				for (const el of this.nodeElements.values()) {
-					el.removeClass("rabbitmap-drop-target");
-				}
-			}
-
-			this.isPanning = false;
-			this.draggedNode = null;
-			this.dragStartPositions.clear();
-			this.resizingNode = null;
-			this.canvas.removeClass("panning");
-
-			// End selection
-			if (this.isSelecting && this.selectionBox) {
-				this.isSelecting = false;
-				this.selectionBox.style.display = "none";
-			}
-		});
-
-		// Space key for pan mode
-		document.addEventListener("keydown", (e) => {
-			if (e.code === "Space" && !this.isInputFocused()) {
-				e.preventDefault();
-				this.spacePressed = true;
-				this.canvas.addClass("pan-mode");
-			}
-			// Delete selected nodes
-			if ((e.code === "Delete" || e.code === "Backspace") && !this.isInputFocused() && this.selectedNodes.size > 0) {
-				e.preventDefault();
-				this.deleteSelectedNodes();
-			}
-			// Escape to clear selection
-			if (e.code === "Escape" && this.selectedNodes.size > 0) {
-				this.clearSelection();
-			}
-		});
-
-		document.addEventListener("keyup", (e) => {
-			if (e.code === "Space") {
-				this.spacePressed = false;
-				this.canvas.removeClass("pan-mode");
-			}
-		});
-
-		// Paste handler for URLs
-		this.canvas.addEventListener("paste", (e) => {
-			if (this.isInputFocused()) return;
-			const text = e.clipboardData?.getData("text/plain")?.trim();
-			if (text && /^https?:\/\//i.test(text)) {
-				e.preventDefault();
-				this.addLinkAtCenter(text);
-			}
-		});
-
-		// Canvas-level drag and drop for importing notes
-		this.canvas.addEventListener("dragover", (e) => {
-			e.preventDefault();
-			this.canvas.addClass("rabbitmap-canvas-drag-over");
-		});
-
-		this.canvas.addEventListener("dragleave", (e) => {
-			e.preventDefault();
-			this.canvas.removeClass("rabbitmap-canvas-drag-over");
-		});
-
-		this.canvas.addEventListener("drop", async (e) => {
-			e.preventDefault();
-			this.canvas.removeClass("rabbitmap-canvas-drag-over");
-
-			const plainText = e.dataTransfer?.getData("text/plain") || "";
-			if (!plainText) return;
-
-			const canvasRect = this.canvas.getBoundingClientRect();
-			const dropX = (e.clientX - canvasRect.left - this.panX) / this.scale;
-			const dropY = (e.clientY - canvasRect.top - this.panY) / this.scale;
-
-			const lines = plainText.split("\n").map(l => l.trim()).filter(l => l);
-			let offsetIndex = 0;
-
-			for (const line of lines) {
-				const path = this.parsePath(line);
-				if (!path) continue;
-
-				// Skip HTTP URLs — those are handled by the paste handler
-				if (path.startsWith("http")) {
-					this.addLinkNode(path, dropX - 150 + offsetIndex * 30, dropY - 100 + offsetIndex * 30);
-					offsetIndex++;
-					continue;
-				}
-
-				// Try to resolve as file or folder
-				const item = this.resolveVaultItem(path);
-
-				if (item instanceof TFolder) {
-					// Add all markdown files from folder as note nodes
-					const mdFiles = this.getMdFilesFromFolder(item);
-					for (const file of mdFiles) {
-						try {
-							const content = await this.app.vault.read(file);
-							this.addNoteNode(file.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
-							offsetIndex++;
-						} catch {}
-					}
-				} else if (item instanceof TFile && item.extension === "md") {
-					try {
-						const content = await this.app.vault.read(item);
-						this.addNoteNode(item.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
-						offsetIndex++;
-					} catch {}
-				}
-			}
-		});
-	}
-
-	private updateSelectionFromBox(left: number, top: number, width: number, height: number): void {
+	updateSelectionFromBox(left: number, top: number, width: number, height: number): void {
 		// Convert screen coords to canvas coords
 		const boxLeft = (left - this.panX) / this.scale;
 		const boxTop = (top - this.panY) / this.scale;
@@ -793,7 +308,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private selectNode(nodeId: string): void {
+	selectNode(nodeId: string): void {
 		if (!this.selectedNodes.has(nodeId)) {
 			this.selectedNodes.add(nodeId);
 			const el = this.nodeElements.get(nodeId);
@@ -803,7 +318,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private deselectNode(nodeId: string): void {
+	deselectNode(nodeId: string): void {
 		if (this.selectedNodes.has(nodeId)) {
 			this.selectedNodes.delete(nodeId);
 			const el = this.nodeElements.get(nodeId);
@@ -813,7 +328,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private clearSelection(): void {
+	clearSelection(): void {
 		for (const nodeId of this.selectedNodes) {
 			const el = this.nodeElements.get(nodeId);
 			if (el) {
@@ -823,7 +338,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.selectedNodes.clear();
 	}
 
-	private deleteSelectedNodes(): void {
+	deleteSelectedNodes(): void {
 		for (const nodeId of this.selectedNodes) {
 			this.nodes.delete(nodeId);
 			this.chatMessages.delete(nodeId);
@@ -842,11 +357,11 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 		this.selectedNodes.clear();
 		this.updateEdges();
-		this.updateMinimap();
+		updateMinimap(this);
 		this.triggerSave();
 	}
 
-	private isInputFocused(): boolean {
+	isInputFocused(): boolean {
 		const active = document.activeElement;
 		return (
 			active instanceof HTMLInputElement ||
@@ -855,7 +370,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		);
 	}
 
-	private zoom(delta: number): void {
+	zoom(delta: number): void {
 		const factor = Math.exp(delta);
 		const newScale = Math.min(Math.max(this.scale * factor, 0.1), 2);
 		this.scale = newScale;
@@ -863,7 +378,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.triggerSave();
 	}
 
-	private zoomAtPoint(delta: number, clientX: number, clientY: number): void {
+	zoomAtPoint(delta: number, clientX: number, clientY: number): void {
 		const rect = this.canvas.getBoundingClientRect();
 		const mouseX = clientX - rect.left;
 		const mouseY = clientY - rect.top;
@@ -882,7 +397,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private resetView(): void {
+	resetView(): void {
 		this.scale = 1;
 		this.panX = 0;
 		this.panY = 0;
@@ -890,7 +405,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.triggerSave();
 	}
 
-	private getContentBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
+	getContentBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
 		if (this.nodes.size === 0) return null;
 
 		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -905,7 +420,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return { minX, minY, maxX, maxY };
 	}
 
-	private clampPan(panX: number, panY: number): { x: number; y: number } {
+	clampPan(panX: number, panY: number): { x: number; y: number } {
 		const bounds = this.getContentBounds();
 		if (!bounds) return { x: panX, y: panY };
 
@@ -952,7 +467,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		};
 	}
 
-	private zoomToNode(nodeId: string): void {
+	zoomToNode(nodeId: string): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) return;
 
@@ -977,13 +492,13 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.animateTo(targetScale, targetPanX, targetPanY);
 	}
 
-	private showMenu(menu: Menu, e: MouseEvent): void {
+	showMenu(menu: Menu, e: MouseEvent): void {
 		this.activeMenu?.close();
 		this.activeMenu = menu;
 		menu.showAtMouseEvent(e);
 	}
 
-	private showChatContextMenu(nodeId: string, e: MouseEvent): void {
+	showChatContextMenu(nodeId: string, e: MouseEvent): void {
 		const menu = new Menu();
 
 		const connectedNodes = this.getConnectedNodes(nodeId);
@@ -1017,7 +532,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.showMenu(menu, e);
 	}
 
-	private analyzeConnections(nodeId: string): void {
+	analyzeConnections(nodeId: string): void {
 		const connectedNodes = this.getConnectedNodes(nodeId);
 		if (connectedNodes.length === 0) return;
 
@@ -1047,7 +562,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		new Notice(`Added ${connectedNodes.length} connected node(s) as context`);
 	}
 
-	private branchChat(nodeId: string, upToMsgIndex?: number): void {
+	branchChat(nodeId: string, upToMsgIndex?: number): void {
 		const sourceNode = this.nodes.get(nodeId);
 		const sourceState = this.chatStates.get(nodeId);
 		const sourceMessages = this.chatMessages.get(nodeId);
@@ -1097,7 +612,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		// Add edge from source to new node
 		this.addEdge(nodeId, newNode.id);
 
-		this.updateMinimap();
+		updateMinimap(this);
 		this.triggerSave();
 
 		// Zoom to new node, scroll to last message, and focus input
@@ -1106,7 +621,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.focusChatInput(newNode.id);
 	}
 
-	private scrollChatToBottom(nodeId: string): void {
+	scrollChatToBottom(nodeId: string): void {
 		const nodeEl = this.nodeElements.get(nodeId);
 		if (!nodeEl) return;
 
@@ -1119,7 +634,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private focusChatInput(nodeId: string): void {
+	focusChatInput(nodeId: string): void {
 		const nodeEl = this.nodeElements.get(nodeId);
 		if (!nodeEl) return;
 
@@ -1145,7 +660,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return this.chatMessages.get(nodeId);
 	}
 
-	private openExpandedChat(nodeId: string): void {
+	openExpandedChat(nodeId: string): void {
 		new ExpandedChatModal(this.app, this, nodeId).open();
 	}
 
@@ -1238,7 +753,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private refreshChatNode(nodeId: string): void {
+	refreshChatNode(nodeId: string): void {
 		const nodeEl = this.nodeElements.get(nodeId);
 		if (!nodeEl) return;
 
@@ -1253,7 +768,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		messagesContainer.scrollTop = messagesContainer.scrollHeight;
 	}
 
-	private async exportChatToMd(node: CanvasNode): Promise<void> {
+	async exportChatToMd(node: CanvasNode): Promise<void> {
 		const messages = this.chatMessages.get(node.id) || [];
 		if (messages.length === 0) {
 			new Notice("No messages to export");
@@ -1306,7 +821,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		await leaf.openFile(file);
 	}
 
-	private showTitleEditor(node: CanvasNode, titleSpan: HTMLElement, container: HTMLElement): void {
+	showTitleEditor(node: CanvasNode, titleSpan: HTMLElement, container: HTMLElement): void {
 		const currentTitle = node.title || (node.type === "chat" ? "Chat" : "Card");
 
 		// Hide title span
@@ -1345,7 +860,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private forkChat(nodeId: string): void {
+	forkChat(nodeId: string): void {
 		const sourceNode = this.nodes.get(nodeId);
 		const sourceState = this.chatStates.get(nodeId);
 		if (!sourceNode || !sourceState) return;
@@ -1384,7 +899,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		// Add edge from source to new node
 		this.addEdge(nodeId, newNode.id);
 
-		this.updateMinimap();
+		updateMinimap(this);
 		this.triggerSave();
 
 		// Zoom to new node and focus input
@@ -1392,7 +907,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.focusChatInput(newNode.id);
 	}
 
-	private findFreePosition(sourceNode: CanvasNode): { x: number; y: number } {
+	findFreePosition(sourceNode: CanvasNode): { x: number; y: number } {
 		const gap = 50; // Gap between nodes
 
 		// Try right position first
@@ -1430,7 +945,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return { x: sourceNode.x + 60, y: sourceNode.y + 60 };
 	}
 
-	private findBlockingNode(x: number, y: number, width: number, height: number): CanvasNode | null {
+	findBlockingNode(x: number, y: number, width: number, height: number): CanvasNode | null {
 		const padding = 20;
 
 		for (const node of this.nodes.values()) {
@@ -1445,7 +960,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return null;
 	}
 
-	private isPositionOccupied(x: number, y: number, width: number, height: number): boolean {
+	isPositionOccupied(x: number, y: number, width: number, height: number): boolean {
 		const padding = 20; // Minimum gap
 
 		for (const node of this.nodes.values()) {
@@ -1463,7 +978,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 
 	// --- Connection Analysis Utilities ---
 
-	private getConnectedNodes(nodeId: string): string[] {
+	getConnectedNodes(nodeId: string): string[] {
 		const connected = new Set<string>();
 		for (const edge of this.edges.values()) {
 			if (edge.from === nodeId) connected.add(edge.to);
@@ -1472,7 +987,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return Array.from(connected);
 	}
 
-	private getNodeContent(nodeId: string): string {
+	getNodeContent(nodeId: string): string {
 		const node = this.nodes.get(nodeId);
 		if (!node) return "";
 
@@ -1512,7 +1027,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private getConnectedContent(nodeIds: string[]): string {
+	getConnectedContent(nodeIds: string[]): string {
 		const parts = nodeIds
 			.map(id => this.getNodeContent(id))
 			.filter(content => content.length > 0);
@@ -1520,7 +1035,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return "Connected nodes:\n\n" + parts.join("\n\n---\n\n");
 	}
 
-	private addEdge(fromId: string, toId: string): void {
+	addEdge(fromId: string, toId: string): void {
 		const edge: Edge = {
 			id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
 			from: fromId,
@@ -1534,7 +1049,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.addEdgeContext(toId, fromId);
 	}
 
-	private addEdgeContext(chatNodeId: string, otherNodeId: string): void {
+	addEdgeContext(chatNodeId: string, otherNodeId: string): void {
 		const chatNode = this.nodes.get(chatNodeId);
 		if (!chatNode || chatNode.type !== "chat") return;
 
@@ -1559,7 +1074,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private renderAllEdges(): void {
+	renderAllEdges(): void {
 		// Clear existing edge elements
 		this.edgesContainer.innerHTML = "";
 
@@ -1568,7 +1083,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private renderEdge(edge: Edge): void {
+	renderEdge(edge: Edge): void {
 		const fromNode = this.nodes.get(edge.from);
 		const toNode = this.nodes.get(edge.to);
 		if (!fromNode || !toNode) return;
@@ -1700,11 +1215,11 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.edgesContainer.appendChild(group);
 	}
 
-	private updateEdges(): void {
+	updateEdges(): void {
 		this.renderAllEdges();
 	}
 
-	private getHandlePosition(node: CanvasNode, side: "top" | "right" | "bottom" | "left"): { x: number; y: number } {
+	getHandlePosition(node: CanvasNode, side: "top" | "right" | "bottom" | "left"): { x: number; y: number } {
 		switch (side) {
 			case "top": return { x: node.x + node.width / 2, y: node.y };
 			case "right": return { x: node.x + node.width, y: node.y + node.height / 2 };
@@ -1713,7 +1228,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private startEdgeDrawing(nodeId: string, side: "top" | "right" | "bottom" | "left", e: MouseEvent): void {
+	startEdgeDrawing(nodeId: string, side: "top" | "right" | "bottom" | "left", e: MouseEvent): void {
 		this.isDrawingEdge = true;
 		this.edgeDrawFromNode = nodeId;
 		this.edgeDrawFromSide = side;
@@ -1733,7 +1248,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.edgeDrawTempLine = line;
 	}
 
-	private findTargetHandle(e: MouseEvent): { nodeId: string; side: string } | null {
+	findTargetHandle(e: MouseEvent): { nodeId: string; side: string } | null {
 		// First try elementFromPoint (exact hit)
 		const el = document.elementFromPoint(e.clientX, e.clientY);
 		if (el) {
@@ -1782,7 +1297,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return null;
 	}
 
-	private showEdgeContextMenu(edgeId: string, e: MouseEvent): void {
+	showEdgeContextMenu(edgeId: string, e: MouseEvent): void {
 		const menu = new Menu();
 		menu.addItem((item) => {
 			item.setTitle("Delete connection")
@@ -1794,13 +1309,13 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.showMenu(menu, e);
 	}
 
-	private deleteEdge(edgeId: string): void {
+	deleteEdge(edgeId: string): void {
 		this.edges.delete(edgeId);
 		this.renderAllEdges();
 		this.triggerSave();
 	}
 
-	private animateTo(targetScale: number, targetPanX: number, targetPanY: number): void {
+	animateTo(targetScale: number, targetPanX: number, targetPanY: number): void {
 		const startScale = this.scale;
 		const startPanX = this.panX;
 		const startPanY = this.panY;
@@ -1830,7 +1345,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		requestAnimationFrame(animate);
 	}
 
-	private updateTransform(): void {
+	updateTransform(): void {
 		if (this.nodesContainer) {
 			this.nodesContainer.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.scale})`;
 		}
@@ -1844,14 +1359,14 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 			this.canvas.style.backgroundSize = `${gridSize}px ${gridSize}px`;
 			this.canvas.style.backgroundPosition = `${this.panX}px ${this.panY}px`;
 		}
-		this.updateMinimap();
+		updateMinimap(this);
 	}
 
-	private generateId(): string {
+	generateId(): string {
 		return "node-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
 	}
 
-	private addNode(node: CanvasNode, save: boolean = true): void {
+	addNode(node: CanvasNode, save: boolean = true): void {
 		this.nodes.set(node.id, node);
 
 		if (node.type === "chat") {
@@ -1878,7 +1393,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private renderNode(node: CanvasNode): void {
+	renderNode(node: CanvasNode): void {
 		if (!this.nodesContainer) return;
 
 		const el = this.nodesContainer.createDiv({
@@ -2048,7 +1563,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.nodeElements.set(node.id, el);
 	}
 
-	private renderLinkContent(node: CanvasNode, container: HTMLElement): void {
+	renderLinkContent(node: CanvasNode, container: HTMLElement): void {
 		container.addClass("rabbitmap-link-content");
 
 		// Thumbnail / image
@@ -2113,7 +1628,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private showLinkContextMenu(nodeId: string, e: MouseEvent): void {
+	showLinkContextMenu(nodeId: string, e: MouseEvent): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) return;
 
@@ -2156,7 +1671,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.showMenu(menu, e);
 	}
 
-	private showNoteContextMenu(nodeId: string, e: MouseEvent): void {
+	showNoteContextMenu(nodeId: string, e: MouseEvent): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) return;
 
@@ -2201,7 +1716,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.showMenu(menu, e);
 	}
 
-	private showMultiSelectContextMenu(e: MouseEvent): void {
+	showMultiSelectContextMenu(e: MouseEvent): void {
 		const menu = new Menu();
 
 		menu.addItem((item) => {
@@ -2225,7 +1740,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.showMenu(menu, e);
 	}
 
-	private summarizeSelected(): void {
+	summarizeSelected(): void {
 		const selectedIds = Array.from(this.selectedNodes);
 		if (selectedIds.length < 2) return;
 
@@ -2289,7 +1804,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		new Notice(`Created analysis chat with ${selectedIds.length} connected nodes`);
 	}
 
-	private renderCardContent(node: CanvasNode, container: HTMLElement): void {
+	renderCardContent(node: CanvasNode, container: HTMLElement): void {
 		const textarea = container.createEl("textarea", {
 			cls: "rabbitmap-card-textarea",
 			attr: { placeholder: "Write something..." },
@@ -2305,7 +1820,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private renderNoteContent(node: CanvasNode, container: HTMLElement): void {
+	renderNoteContent(node: CanvasNode, container: HTMLElement): void {
 		container.addClass("rabbitmap-note-content");
 
 		// Rendered markdown area
@@ -2336,7 +1851,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private renderChatContent(nodeId: string, container: HTMLElement): void {
+	renderChatContent(nodeId: string, container: HTMLElement): void {
 		// Header bar
 		const headerBar = container.createDiv({ cls: "rabbitmap-chat-header" });
 		const headerIcon = headerBar.createSpan({ cls: "rabbitmap-chat-header-icon" });
@@ -2909,7 +2424,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private renderChatMessage(container: HTMLElement, msg: ChatMessage, nodeId: string, msgIndex: number): void {
+	renderChatMessage(container: HTMLElement, msg: ChatMessage, nodeId: string, msgIndex: number): void {
 		const msgEl = container.createDiv({
 			cls: `rabbitmap-chat-message rabbitmap-chat-${msg.role}`,
 		});
@@ -2936,7 +2451,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private showMessageContextMenu(nodeId: string, msgIndex: number, e: MouseEvent): void {
+	showMessageContextMenu(nodeId: string, msgIndex: number, e: MouseEvent): void {
 		const menu = new Menu();
 
 		menu.addItem((item) => {
@@ -2976,7 +2491,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.showMenu(menu, e);
 	}
 
-	private async exportMessageToMd(nodeId: string, msgIndex: number, includeHistory: boolean): Promise<void> {
+	async exportMessageToMd(nodeId: string, msgIndex: number, includeHistory: boolean): Promise<void> {
 		const messages = this.chatMessages.get(nodeId) || [];
 		const node = this.nodes.get(nodeId);
 		const chatState = this.chatStates.get(nodeId);
@@ -3044,7 +2559,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		await leaf.openFile(file);
 	}
 
-	private updateNodePosition(nodeId: string, x: number, y: number): void {
+	updateNodePosition(nodeId: string, x: number, y: number): void {
 		const node = this.nodes.get(nodeId);
 		const el = this.nodeElements.get(nodeId);
 		if (node && el) {
@@ -3056,7 +2571,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private updateNodeSize(nodeId: string, width: number, height: number): void {
+	updateNodeSize(nodeId: string, width: number, height: number): void {
 		const node = this.nodes.get(nodeId);
 		const el = this.nodeElements.get(nodeId);
 		if (node && el) {
@@ -3064,12 +2579,12 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 			node.height = height;
 			el.style.width = `${width}px`;
 			el.style.height = `${height}px`;
-			this.updateMinimap();
+			updateMinimap(this);
 			this.updateEdges();
 		}
 	}
 
-	private deleteNode(nodeId: string): void {
+	deleteNode(nodeId: string): void {
 		this.nodes.delete(nodeId);
 		this.chatMessages.delete(nodeId);
 		this.chatStates.delete(nodeId);
@@ -3092,11 +2607,11 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 			}
 		}
 		this.updateEdges();
-		this.updateMinimap();
+		updateMinimap(this);
 		this.triggerSave();
 	}
 
-	private addCardAtCenter(): void {
+	addCardAtCenter(): void {
 		const rect = this.canvas.getBoundingClientRect();
 		const centerX = (rect.width / 2 - this.panX) / this.scale;
 		const centerY = (rect.height / 2 - this.panY) / this.scale;
@@ -3112,7 +2627,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private addChatAtCenter(): void {
+	addChatAtCenter(): void {
 		const rect = this.canvas.getBoundingClientRect();
 		const centerX = (rect.width / 2 - this.panX) / this.scale;
 		const centerY = (rect.height / 2 - this.panY) / this.scale;
@@ -3128,7 +2643,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		});
 	}
 
-	private showAddLinkModal(): void {
+	showAddLinkModal(): void {
 		const modal = new Modal(this.app);
 		modal.titleEl.setText("Add Link");
 		const input = modal.contentEl.createEl("input", {
@@ -3163,14 +2678,14 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		input.focus();
 	}
 
-	private addLinkAtCenter(url: string): void {
+	addLinkAtCenter(url: string): void {
 		const rect = this.canvas.getBoundingClientRect();
 		const centerX = (rect.width / 2 - this.panX) / this.scale;
 		const centerY = (rect.height / 2 - this.panY) / this.scale;
 		this.addLinkNode(url, centerX - 150, centerY - 100);
 	}
 
-	private addLinkNode(url: string, x: number, y: number): void {
+	addLinkNode(url: string, x: number, y: number): void {
 		const nodeId = this.generateId();
 		const node: CanvasNode = {
 			id: nodeId,
@@ -3202,7 +2717,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.fetchLinkMetadata(url, nodeId);
 	}
 
-	private parsePath(input: string): string {
+	parsePath(input: string): string {
 		input = input.trim();
 
 		// Handle obsidian:// URL format
@@ -3241,7 +2756,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return input;
 	}
 
-	private resolveVaultItem(path: string): TFile | TFolder | null {
+	resolveVaultItem(path: string): TFile | TFolder | null {
 		let item = this.app.vault.getAbstractFileByPath(path);
 
 		// Try adding .md extension
@@ -3278,7 +2793,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return item as TFile | TFolder | null;
 	}
 
-	private getAllFolders(folder: TFolder): TFolder[] {
+	getAllFolders(folder: TFolder): TFolder[] {
 		const folders: TFolder[] = [folder];
 		for (const child of folder.children) {
 			if (child instanceof TFolder) {
@@ -3288,7 +2803,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return folders;
 	}
 
-	private getMdFilesFromFolder(folder: TFolder): TFile[] {
+	getMdFilesFromFolder(folder: TFolder): TFile[] {
 		const files: TFile[] = [];
 		for (const child of folder.children) {
 			if (child instanceof TFile && child.extension === "md") {
@@ -3300,7 +2815,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return files;
 	}
 
-	private addNoteNode(filePath: string, content: string, x: number, y: number): void {
+	addNoteNode(filePath: string, content: string, x: number, y: number): void {
 		const node: CanvasNode = {
 			id: this.generateId(),
 			x,
@@ -3315,7 +2830,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.addNode(node);
 	}
 
-	private async fetchLinkMetadata(url: string, nodeId: string): Promise<void> {
+	async fetchLinkMetadata(url: string, nodeId: string): Promise<void> {
 		const node = this.nodes.get(nodeId);
 		if (!node) return;
 
@@ -3341,7 +2856,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.triggerSave();
 	}
 
-	private async fetchYouTubeMetadata(url: string, node: CanvasNode): Promise<void> {
+	async fetchYouTubeMetadata(url: string, node: CanvasNode): Promise<void> {
 		try {
 			const resp = await requestUrl({
 				url: `https://noembed.com/embed?url=${encodeURIComponent(url)}`,
@@ -3389,7 +2904,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private async fetchTwitterMetadata(url: string, node: CanvasNode): Promise<void> {
+	async fetchTwitterMetadata(url: string, node: CanvasNode): Promise<void> {
 		// Use fxtwitter API which returns rich tweet data as JSON
 		const match = url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/);
 		if (!match) {
@@ -3456,7 +2971,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 	}
 
-	private async fetchWebPageMetadata(url: string, node: CanvasNode): Promise<void> {
+	async fetchWebPageMetadata(url: string, node: CanvasNode): Promise<void> {
 		const resp = await requestUrl({ url });
 		const html = resp.text;
 
@@ -3496,7 +3011,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		node.linkContent = this.extractPageContent(doc, url);
 	}
 
-	private extractPageContent(doc: Document, url: string): string {
+	extractPageContent(doc: Document, url: string): string {
 		// Strategy 1: JSON-LD structured data (best for Twitter/X, news, blogs)
 		const jsonLdContent = this.extractJsonLdContent(doc);
 		if (jsonLdContent && jsonLdContent.length > 200) {
@@ -3523,7 +3038,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return htmlContent.slice(0, 10000);
 	}
 
-	private extractJsonLdContent(doc: Document): string {
+	extractJsonLdContent(doc: Document): string {
 		const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
 		const parts: string[] = [];
 
@@ -3566,7 +3081,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return parts.join("\n\n").trim();
 	}
 
-	private extractHtmlContent(doc: Document): string {
+	extractHtmlContent(doc: Document): string {
 		// Remove non-content elements
 		const removeSelectors = [
 			"script", "style", "nav", "footer", "header", "aside", "iframe", "noscript",
@@ -3624,7 +3139,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return (contentEl.textContent || "").replace(/\s+/g, " ").trim();
 	}
 
-	private extractMetaContent(doc: Document): string {
+	extractMetaContent(doc: Document): string {
 		const metaSelectors = [
 			'meta[property="og:description"]',
 			'meta[name="description"]',
@@ -3645,7 +3160,7 @@ class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return parts.join("\n\n").trim();
 	}
 
-	private rerenderNode(nodeId: string): void {
+	rerenderNode(nodeId: string): void {
 		const el = this.nodeElements.get(nodeId);
 		const node = this.nodes.get(nodeId);
 		if (!el || !node) return;
