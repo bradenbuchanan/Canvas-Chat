@@ -1,5 +1,6 @@
 import { Notice, TFile, TFolder } from "obsidian";
 import type { CanvasChatView } from "../../main";
+import { renderChatContent } from "./rendering";
 
 export function setupEventListeners(view: CanvasChatView): void {
 	view.canvas.addEventListener("wheel", (e) => {
@@ -180,7 +181,7 @@ export function setupEventListeners(view: CanvasChatView): void {
 									const content = nodeEl.querySelector(".rabbitmap-node-content");
 									if (content) {
 										content.empty();
-										view.renderChatContent(id, content as HTMLElement);
+										renderChatContent(view, id, content as HTMLElement);
 									}
 								}
 
