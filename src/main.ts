@@ -7,10 +7,7 @@ import {
 	TFolder,
 	Notice,
 	Modal,
-	MarkdownRenderer,
-	Component,
 	requestUrl,
-	setIcon,
 } from "obsidian";
 import {
 	CanvasNode,
@@ -29,10 +26,7 @@ import {
 	DEFAULT_SYSTEM_PROMPT,
 	DEFAULT_CONTEXT_TEMPLATE,
 } from "./constants";
-import {
-	PromptEditorModal,
-	ExpandedChatModal,
-} from "./modals";
+import { ExpandedChatModal } from "./modals";
 import {
 	createMinimap,
 	updateMinimap,
@@ -180,7 +174,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 				// Restore chat states
 				if (parsed.chatStates) {
 					for (const [nodeId, state] of Object.entries(parsed.chatStates)) {
-						this.chatStates.set(nodeId, state as ChatNodeState);
+						this.chatStates.set(nodeId, state);
 					}
 				}
 
@@ -201,7 +195,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 				}
 			}
 		} catch (e) {
-			console.log("Error parsing canvas chat file:", e);
+			console.error("Error parsing canvas chat file:", e);
 		}
 
 		// If no nodes after loading, add a default chat
@@ -229,14 +223,14 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		this.nodeElements.forEach((el) => el.remove());
 		this.nodeElements.clear();
 		if (this.edgesContainer) {
-			this.edgesContainer.innerHTML = "";
+			while (this.edgesContainer.firstChild) this.edgesContainer.firstChild.remove();
 		}
 		this.scale = 1;
 		this.panX = 0;
 		this.panY = 0;
 	}
 
-	async onOpen(): Promise<void> {
+	onOpen(): Promise<void> {
 		const container = this.containerEl.children[1];
 		container.empty();
 		container.addClass("rabbitmap-container");
@@ -253,7 +247,6 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 
 		// Create selection box
 		this.selectionBox = this.canvas.createDiv({ cls: "rabbitmap-selection-box" });
-		this.selectionBox.style.display = "none";
 
 		// Create toolbar
 		createToolbar(this, container);
@@ -265,6 +258,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		setupEventListeners(this);
 
 		this.updateTransform();
+		return Promise.resolve();
 	}
 
 	triggerSave(): void {
@@ -275,15 +269,15 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 			window.clearTimeout(this.saveTimeout);
 		}
 
-		this.saveTimeout = window.setTimeout(async () => {
+		this.saveTimeout = window.setTimeout(() => {
 			if (!this.file) return;
 
 			this.isSaving = true;
-			await this.app.vault.modify(this.file, this.getViewData());
-			// Reset flag after a short delay to catch any setViewData calls
-			setTimeout(() => {
-				this.isSaving = false;
-			}, 100);
+			void this.app.vault.modify(this.file, this.getViewData()).then(() => {
+				setTimeout(() => {
+					this.isSaving = false;
+				}, 100);
+			});
 		}, 300);
 	}
 
@@ -721,7 +715,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 							.replace(/\{filename\}/g, file.name)
 							.replace(/\{content\}/g, content);
 						contextParts.push(formatted);
-					} catch {}
+					} catch { /* noop */ }
 				}
 			}
 			if (contextParts.length > 0) {
@@ -831,7 +825,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		const currentTitle = node.title || (node.type === "chat" ? "Chat" : "Card");
 
 		// Hide title span
-		titleSpan.style.display = "none";
+		titleSpan.addClass("is-hidden");
 
 		// Create input
 		const input = container.createEl("input", {
@@ -850,7 +844,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 				this.triggerSave();
 			}
 			input.remove();
-			titleSpan.style.display = "";
+			titleSpan.removeClass("is-hidden");
 		};
 
 		input.addEventListener("blur", finishEdit);
@@ -1043,7 +1037,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 
 	addEdge(fromId: string, toId: string): void {
 		const edge: Edge = {
-			id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+			id: `edge-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
 			from: fromId,
 			to: toId,
 		};
@@ -1117,7 +1111,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		// First try elementFromPoint (exact hit)
 		const el = document.elementFromPoint(e.clientX, e.clientY);
 		if (el) {
-			const handle = (el as HTMLElement).closest(".rabbitmap-connection-handle") as HTMLElement | null;
+			const handle = (el as HTMLElement).closest<HTMLElement>(".rabbitmap-connection-handle");
 			if (handle) {
 				const nodeId = handle.getAttribute("data-node-id");
 				const side = handle.getAttribute("data-side");
@@ -1228,7 +1222,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 	}
 
 	generateId(): string {
-		return "node-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
+		return "node-" + Date.now() + "-" + Math.random().toString(36).slice(2, 11);
 	}
 
 	addNode(node: CanvasNode, save: boolean = true): void {
@@ -1282,7 +1276,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 						node.linkImage = undefined;
 						node.linkContent = undefined;
 						rerenderNode(this, nodeId);
-						this.fetchLinkMetadata(node.url, nodeId);
+						void this.fetchLinkMetadata(node.url, nodeId);
 					}
 				});
 		});
@@ -1292,7 +1286,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 				.setIcon("copy")
 				.onClick(() => {
 					if (node.url) {
-						navigator.clipboard.writeText(node.url);
+						void navigator.clipboard.writeText(node.url);
 						new Notice("URL copied to clipboard");
 					}
 				});
@@ -1312,7 +1306,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 				item.setTitle("Open in Obsidian")
 					.setIcon("file-text")
 					.onClick(() => {
-						this.app.workspace.openLinkText(node.filePath!, "", false);
+						void this.app.workspace.openLinkText(node.filePath!, "", false);
 					});
 			});
 
@@ -1338,7 +1332,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 			item.setTitle("Copy content")
 				.setIcon("copy")
 				.onClick(() => {
-					navigator.clipboard.writeText(node.content);
+					void navigator.clipboard.writeText(node.content);
 					new Notice("Content copied to clipboard");
 				});
 		});
@@ -1375,11 +1369,10 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		if (selectedIds.length < 2) return;
 
 		// Calculate centroid of selected nodes and offset new chat node to the right
-		let sumX = 0, sumY = 0, maxRight = 0;
+		let sumY = 0, maxRight = 0;
 		for (const id of selectedIds) {
 			const n = this.nodes.get(id);
 			if (n) {
-				sumX += n.x;
 				sumY += n.y;
 				maxRight = Math.max(maxRight, n.x + n.width);
 			}
@@ -1459,7 +1452,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 			item.setTitle("Save this message")
 				.setIcon("file-text")
 				.onClick(() => {
-					this.exportMessageToMd(nodeId, msgIndex, false);
+					void this.exportMessageToMd(nodeId, msgIndex, false);
 				});
 		});
 
@@ -1467,7 +1460,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 			item.setTitle("Save chat up to here")
 				.setIcon("files")
 				.onClick(() => {
-					this.exportMessageToMd(nodeId, msgIndex, true);
+					void this.exportMessageToMd(nodeId, msgIndex, true);
 				});
 		});
 
@@ -1628,17 +1621,14 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 
 	showAddLinkModal(): void {
 		const modal = new Modal(this.app);
-		modal.titleEl.setText("Add Link");
+		modal.titleEl.setText("Add link");
 		const input = modal.contentEl.createEl("input", {
 			cls: "rabbitmap-link-input",
 			attr: { type: "text", placeholder: "Paste a URL (e.g. https://...)" },
 		});
-		input.style.width = "100%";
-		input.style.padding = "8px";
-		input.style.marginBottom = "12px";
 
 		const btn = modal.contentEl.createEl("button", {
-			text: "Add to Canvas",
+			text: "Add to canvas",
 			cls: "mod-cta",
 		});
 		btn.onclick = () => {
@@ -1697,7 +1687,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		}
 
 		this.addNode(node);
-		this.fetchLinkMetadata(url, nodeId);
+		void this.fetchLinkMetadata(url, nodeId);
 	}
 
 	parsePath(input: string): string {
@@ -1711,13 +1701,13 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 				if (filePath) {
 					return decodeURIComponent(filePath);
 				}
-			} catch {}
+			} catch { /* noop */ }
 		}
 
 		// Handle URL encoding
 		try {
 			input = decodeURIComponent(input);
-		} catch {}
+		} catch { /* noop */ }
 
 		// Handle [[wikilink]] format
 		const wikiMatch = input.match(/^\[\[(.+?)\]\]$/);
@@ -2143,9 +2133,10 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		return parts.join("\n\n").trim();
 	}
 
-	async onClose(): Promise<void> {
+	onClose(): Promise<void> {
 		// Final save before closing
 		this.triggerSave();
+		return Promise.resolve();
 	}
 }
 
@@ -2162,14 +2153,14 @@ export default class CanvasChatPlugin extends Plugin {
 		this.registerExtensions([FILE_EXTENSION], VIEW_TYPE_CANVAS_CHAT);
 
 		// Add ribbon icon
-		this.addRibbonIcon("layout-dashboard", "Create new Canvas Chat", async () => {
+		this.addRibbonIcon("layout-dashboard", "Create new canvas chat", async () => {
 			await this.createNewCanvas();
 		});
 
 		// Add command to create new canvas
 		this.addCommand({
-			id: "create-new-canvas-chat",
-			name: "Create new Canvas Chat canvas",
+			id: "create-new",
+			name: "Create new canvas",
 			callback: async () => {
 				await this.createNewCanvas();
 			},
@@ -2180,7 +2171,7 @@ export default class CanvasChatPlugin extends Plugin {
 			this.app.workspace.on("file-menu", (menu: Menu, file) => {
 				if (file instanceof TFolder) {
 					menu.addItem((item) => {
-						item.setTitle("New Canvas Chat")
+						item.setTitle("New canvas chat")
 							.setIcon("layout-dashboard")
 							.onClick(async () => {
 								await this.createNewCanvas(file.path);
@@ -2233,7 +2224,7 @@ export default class CanvasChatPlugin extends Plugin {
 		for (const provider of this.settings.providers) {
 			if (!provider.apiFormat) {
 				const defaultMatch = DEFAULT_SETTINGS.providers.find(p => p.name === provider.name);
-				(provider as any).apiFormat = defaultMatch?.apiFormat || "openai";
+				provider.apiFormat = defaultMatch?.apiFormat || "openai";
 			}
 		}
 	}
@@ -2242,7 +2233,5 @@ export default class CanvasChatPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	onunload(): void {
-		this.app.workspace.detachLeavesOfType(VIEW_TYPE_CANVAS_CHAT);
-	}
+	onunload(): void {}
 }

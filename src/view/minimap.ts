@@ -60,7 +60,7 @@ export function updateMinimap(view: CanvasChatView): void {
 
 	const bounds = view.getContentBounds();
 	if (!bounds) {
-		view.minimapViewport.style.display = "none";
+		view.minimapViewport.addClass("is-hidden");
 		return;
 	}
 
@@ -97,10 +97,12 @@ export function updateMinimap(view: CanvasChatView): void {
 			view.minimapNodes.set(nodeId, minimapNode);
 		}
 
-		minimapNode.style.left = `${offsetX + (node.x - contentMinX) * minimapScale}px`;
-		minimapNode.style.top = `${offsetY + (node.y - contentMinY) * minimapScale}px`;
-		minimapNode.style.width = `${node.width * minimapScale}px`;
-		minimapNode.style.height = `${node.height * minimapScale}px`;
+		minimapNode.setCssStyles({
+			left: `${offsetX + (node.x - contentMinX) * minimapScale}px`,
+			top: `${offsetY + (node.y - contentMinY) * minimapScale}px`,
+			width: `${node.width * minimapScale}px`,
+			height: `${node.height * minimapScale}px`,
+		});
 	}
 
 	for (const [nodeId, el] of view.minimapNodes) {
@@ -110,14 +112,16 @@ export function updateMinimap(view: CanvasChatView): void {
 		}
 	}
 
-	view.minimapViewport.style.display = "block";
+	view.minimapViewport.removeClass("is-hidden");
 	const viewLeft = (-view.panX / view.scale - contentMinX) * minimapScale + offsetX;
 	const viewTop = (-view.panY / view.scale - contentMinY) * minimapScale + offsetY;
 	const viewWidth = (canvasRect.width / view.scale) * minimapScale;
 	const viewHeight = (canvasRect.height / view.scale) * minimapScale;
 
-	view.minimapViewport.style.left = `${viewLeft}px`;
-	view.minimapViewport.style.top = `${viewTop}px`;
-	view.minimapViewport.style.width = `${viewWidth}px`;
-	view.minimapViewport.style.height = `${viewHeight}px`;
+	view.minimapViewport.setCssStyles({
+		left: `${viewLeft}px`,
+		top: `${viewTop}px`,
+		width: `${viewWidth}px`,
+		height: `${viewHeight}px`,
+	});
 }

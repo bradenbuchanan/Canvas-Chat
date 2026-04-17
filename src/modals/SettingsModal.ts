@@ -1,4 +1,4 @@
-import { Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Notice, Setting } from "obsidian";
 import type { PluginSettings } from "../types";
 
 export interface SettingsHost {
@@ -9,7 +9,7 @@ export interface SettingsHost {
 export class SettingsModal extends Modal {
 	plugin: SettingsHost;
 
-	constructor(app: any, plugin: SettingsHost) {
+	constructor(app: App, plugin: SettingsHost) {
 		super(app);
 		this.plugin = plugin;
 	}
@@ -19,7 +19,7 @@ export class SettingsModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass("rabbitmap-settings-modal");
 
-		contentEl.createEl("h2", { text: "Provider Settings" });
+		contentEl.createEl("h2", { text: "Provider settings" });
 
 		// Providers section
 		const providersContainer = contentEl.createDiv({ cls: "rabbitmap-providers-container" });
@@ -63,7 +63,7 @@ export class SettingsModal extends Modal {
 
 				// API Key setting
 				new Setting(providerSection)
-					.setName("API Key")
+					.setName("API key")
 					.setDesc(`Enter your ${provider.name} API key`)
 					.addText((text) =>
 						text
@@ -77,11 +77,11 @@ export class SettingsModal extends Modal {
 
 				// API Format setting
 				new Setting(providerSection)
-					.setName("API Format")
+					.setName("API format")
 					.setDesc("Select the API format for this provider")
 					.addDropdown((dropdown) =>
 						dropdown
-							.addOption("openai", "OpenAI Compatible")
+							.addOption("openai", "OpenAI compatible")
 							.addOption("anthropic", "Anthropic (Claude)")
 							.addOption("google", "Google (Gemini)")
 							.setValue(provider.apiFormat || "openai")
@@ -164,7 +164,7 @@ export class SettingsModal extends Modal {
 				cls: "rabbitmap-new-provider-input"
 			});
 			const addProviderBtn = addProviderRow.createEl("button", {
-				text: "Add Provider",
+				text: "Add provider",
 				cls: "rabbitmap-add-provider-btn"
 			});
 
@@ -199,7 +199,7 @@ export class SettingsModal extends Modal {
 
 		const linkContainer = contentEl.createDiv({ cls: "rabbitmap-settings-links" });
 		linkContainer.createEl("a", {
-			text: "OpenAI Platform",
+			text: "OpenAI platform",
 			href: "https://platform.openai.com/api-keys",
 		});
 		linkContainer.createEl("span", { text: " | " });
@@ -214,7 +214,7 @@ export class SettingsModal extends Modal {
 		});
 		linkContainer.createEl("span", { text: " | " });
 		linkContainer.createEl("a", {
-			text: "Anthropic Console",
+			text: "Anthropic console",
 			href: "https://console.anthropic.com/settings/keys",
 		});
 	}

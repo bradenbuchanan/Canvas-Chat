@@ -1,4 +1,4 @@
-import { Modal } from "obsidian";
+import { App, Modal } from "obsidian";
 import type { ChatViewHandle } from "../types";
 
 export class ExpandedChatModal extends Modal {
@@ -8,7 +8,7 @@ export class ExpandedChatModal extends Modal {
 	private input!: HTMLTextAreaElement;
 	private updateInterval!: number;
 
-	constructor(app: any, view: ChatViewHandle, nodeId: string) {
+	constructor(app: App, view: ChatViewHandle, nodeId: string) {
 		super(app);
 		this.view = view;
 		this.nodeId = nodeId;
@@ -49,11 +49,11 @@ export class ExpandedChatModal extends Modal {
 			cls: "rabbitmap-expanded-send-btn"
 		});
 
-		sendBtn.onclick = () => this.sendMessage();
+		sendBtn.onclick = () => void this.sendMessage();
 		this.input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
-				this.sendMessage();
+				void this.sendMessage();
 			}
 		});
 

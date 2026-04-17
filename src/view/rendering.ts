@@ -1,8 +1,6 @@
 import {
-	Menu,
 	Notice,
 	MarkdownRenderer,
-	Component,
 	setIcon,
 	TFile,
 	TFolder,
@@ -12,11 +10,10 @@ import type { CanvasNode, ChatMessage, Edge, ChatNodeState } from "../types";
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CONTEXT_TEMPLATE } from "../constants";
 import { PromptEditorModal } from "../modals";
 import { callLLM } from "../llm";
-import { updateMinimap } from "./minimap";
 
 export function renderAllEdges(view: CanvasChatView): void {
 	// Clear existing edge elements
-	view.edgesContainer.innerHTML = "";
+	while (view.edgesContainer.firstChild) view.edgesContainer.firstChild.remove();
 
 	for (const edge of view.edges.values()) {
 		renderEdge(view, edge);
@@ -77,6 +74,7 @@ export function renderEdge(view: CanvasChatView, edge: Edge): void {
 	// Create group for edge
 	const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
 	group.setAttribute("id", edge.id);
+	group.setAttribute("class", "rabbitmap-edge-group");
 
 	// Create path element
 	const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -115,7 +113,6 @@ export function renderEdge(view: CanvasChatView, edge: Edge): void {
 	group.appendChild(path);
 
 	// Edge hover and context menu
-	group.style.pointerEvents = "auto";
 	group.addEventListener("mouseenter", () => {
 		path.classList.add("rabbitmap-edge-hover");
 	});
@@ -161,10 +158,12 @@ export function renderNode(view: CanvasChatView, node: CanvasNode): void {
 	const el = view.nodesContainer.createDiv({
 		cls: `rabbitmap-node rabbitmap-node-${node.type}`,
 	});
-	el.style.left = `${node.x}px`;
-	el.style.top = `${node.y}px`;
-	el.style.width = `${node.width}px`;
-	el.style.height = `${node.height}px`;
+	el.setCssStyles({
+		left: `${node.x}px`,
+		top: `${node.y}px`,
+		width: `${node.width}px`,
+		height: `${node.height}px`,
+	});
 
 	// Header for dragging
 	const header = el.createDiv({ cls: "rabbitmap-node-header" });
@@ -178,7 +177,7 @@ export function renderNode(view: CanvasChatView, node: CanvasNode): void {
 
 	// Edit title button (pencil icon)
 	const editTitleBtn = titleContainer.createEl("button", { cls: "rabbitmap-edit-title-btn" });
-	editTitleBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
+	setIcon(editTitleBtn, "pencil");
 
 	editTitleBtn.onclick = (e) => {
 		e.stopPropagation();
@@ -188,17 +187,17 @@ export function renderNode(view: CanvasChatView, node: CanvasNode): void {
 	// Export to MD button (only for chat nodes)
 	if (node.type === "chat") {
 		const exportBtn = titleContainer.createEl("button", { cls: "rabbitmap-export-btn" });
-		exportBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
-		exportBtn.title = "Save as MD";
+		setIcon(exportBtn, "download");
+		exportBtn.title = "Save as markdown";
 
 		exportBtn.onclick = (e) => {
 			e.stopPropagation();
-			view.exportChatToMd(node);
+			void view.exportChatToMd(node);
 		};
 
 		// Expand chat button
 		const expandBtn = titleContainer.createEl("button", { cls: "rabbitmap-expand-btn" });
-		expandBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
+		setIcon(expandBtn, "maximize-2");
 		expandBtn.title = "Expand chat";
 
 		expandBtn.onclick = (e) => {
@@ -351,7 +350,7 @@ export function renderLinkContent(view: CanvasChatView, node: CanvasNode, contai
 		try {
 			const parsed = new URL(node.url);
 			displayUrl = parsed.hostname + (parsed.pathname !== "/" ? parsed.pathname : "");
-		} catch {}
+		} catch { /* noop */ }
 		info.createDiv({
 			cls: "rabbitmap-link-url",
 			text: displayUrl,
@@ -375,7 +374,7 @@ export function renderLinkContent(view: CanvasChatView, node: CanvasNode, contai
 	// Open button
 	const openBtn = container.createEl("button", {
 		cls: "rabbitmap-link-open-btn",
-		text: "Open Link",
+		text: "Open link",
 	});
 	openBtn.addEventListener("click", (e) => {
 		e.stopPropagation();
@@ -411,12 +410,12 @@ export function renderNoteContent(view: CanvasChatView, node: CanvasNode, contai
 
 	// Rendered markdown area
 	const markdownContainer = container.createDiv({ cls: "rabbitmap-note-markdown" });
-	MarkdownRenderer.render(
+	void MarkdownRenderer.render(
 		view.app,
 		node.content,
 		markdownContainer,
 		node.filePath || "",
-		new Component()
+		view
 	);
 
 	// Open in Obsidian button
@@ -427,7 +426,7 @@ export function renderNoteContent(view: CanvasChatView, node: CanvasNode, contai
 		});
 		openBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			view.app.workspace.openLinkText(node.filePath!, "", false);
+			void view.app.workspace.openLinkText(node.filePath!, "", false);
 		});
 	}
 
@@ -516,7 +515,7 @@ export function renderChatContent(view: CanvasChatView, nodeId: string, containe
 				.filter(m => m.length > 0);
 		}
 
-		modelSelect.innerHTML = "";
+		while (modelSelect.firstChild) modelSelect.firstChild.remove();
 		for (const model of models) {
 			const option = document.createElement("option");
 			option.text = model;
@@ -720,7 +719,7 @@ export function renderChatContent(view: CanvasChatView, nodeId: string, containe
 	modelLabel.textContent = formatModelName(state.model) + " \u25BE";
 
 	const popover = modelLabelContainer.createDiv({ cls: "rabbitmap-chat-model-popover" });
-	popover.style.display = "none";
+	popover.addClass("is-hidden");
 	popover.appendChild(providerSelect);
 	popover.appendChild(modelSelect);
 
@@ -728,13 +727,13 @@ export function renderChatContent(view: CanvasChatView, nodeId: string, containe
 	modelLabel.onclick = (e: MouseEvent) => {
 		e.stopPropagation();
 		popoverOpen = !popoverOpen;
-		popover.style.display = popoverOpen ? "flex" : "none";
+		popover.toggleClass("is-hidden", !popoverOpen);
 	};
 
 	document.addEventListener("click", () => {
 		if (popoverOpen) {
 			popoverOpen = false;
-			popover.style.display = "none";
+			popover.addClass("is-hidden");
 		}
 	});
 
@@ -775,12 +774,12 @@ export function renderChatContent(view: CanvasChatView, nodeId: string, containe
 					if (filePath) {
 						return decodeURIComponent(filePath);
 					}
-				} catch {}
+				} catch { /* noop */ }
 			}
 
 			try {
 				inputStr = decodeURIComponent(inputStr);
-			} catch {}
+			} catch { /* noop */ }
 
 			const wikiMatch = inputStr.match(/^\[\[(.+?)\]\]$/);
 			if (wikiMatch) {
@@ -959,7 +958,7 @@ export function renderChatContent(view: CanvasChatView, nodeId: string, containe
 							.replace(/\{filename\}/g, file.name)
 							.replace(/\{content\}/g, content);
 						contextParts.push(formatted);
-					} catch {}
+					} catch { /* noop */ }
 				}
 			}
 			if (contextParts.length > 0) {
@@ -1001,11 +1000,11 @@ export function renderChatContent(view: CanvasChatView, nodeId: string, containe
 		}
 	};
 
-	sendBtn.onclick = sendMessage;
+	sendBtn.onclick = () => void sendMessage();
 	input.addEventListener("keydown", (e: KeyboardEvent) => {
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
-			sendMessage();
+			void sendMessage();
 		}
 	});
 }
@@ -1018,12 +1017,12 @@ export function renderChatMessage(view: CanvasChatView, container: HTMLElement, 
 	// Render markdown for assistant messages, plain text for user
 	if (msg.role === "assistant") {
 		const contentEl = msgEl.createDiv({ cls: "rabbitmap-message-content" });
-		MarkdownRenderer.render(
+		void MarkdownRenderer.render(
 			view.app,
 			msg.content,
 			contentEl,
 			"",
-			new Component()
+			view
 		);
 	} else {
 		msgEl.createSpan({ text: msg.content });

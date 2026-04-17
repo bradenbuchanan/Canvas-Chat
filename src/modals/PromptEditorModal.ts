@@ -1,11 +1,11 @@
-import { Modal } from "obsidian";
+import { App, Modal } from "obsidian";
 
 export class PromptEditorModal extends Modal {
 	private prompt: string;
 	private contextTemplate: string;
 	private onSave: (prompt: string, template: string) => void;
 
-	constructor(app: any, prompt: string, contextTemplate: string, onSave: (prompt: string, template: string) => void) {
+	constructor(app: App, prompt: string, contextTemplate: string, onSave: (prompt: string, template: string) => void) {
 		super(app);
 		this.prompt = prompt;
 		this.contextTemplate = contextTemplate;
@@ -18,7 +18,7 @@ export class PromptEditorModal extends Modal {
 		contentEl.addClass("rabbitmap-prompt-modal");
 
 		// System Prompt section
-		contentEl.createEl("h3", { text: "System Prompt" });
+		contentEl.createEl("h3", { text: "System prompt" });
 		const promptTextarea = contentEl.createEl("textarea", {
 			cls: "rabbitmap-prompt-textarea",
 			attr: { placeholder: "Enter system prompt for this chat..." }
@@ -26,7 +26,7 @@ export class PromptEditorModal extends Modal {
 		promptTextarea.value = this.prompt;
 
 		// Context Template section
-		contentEl.createEl("h3", { text: "Context Template", cls: "rabbitmap-prompt-section-title" });
+		contentEl.createEl("h3", { text: "Context template", cls: "rabbitmap-prompt-section-title" });
 		contentEl.createEl("p", {
 			text: "Variables: {filepath}, {filename}, {content}",
 			cls: "rabbitmap-prompt-hint"

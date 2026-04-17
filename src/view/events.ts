@@ -36,11 +36,13 @@ export function setupEventListeners(view: CanvasChatView): void {
 			view.selectionStartY = e.clientY - rect.top;
 
 			if (view.selectionBox) {
-				view.selectionBox.style.left = `${view.selectionStartX}px`;
-				view.selectionBox.style.top = `${view.selectionStartY}px`;
-				view.selectionBox.style.width = "0px";
-				view.selectionBox.style.height = "0px";
-				view.selectionBox.style.display = "block";
+				view.selectionBox.setCssStyles({
+					left: `${view.selectionStartX}px`,
+					top: `${view.selectionStartY}px`,
+					width: "0px",
+					height: "0px",
+				});
+				view.selectionBox.addClass("is-active");
 			}
 
 			if (!e.shiftKey) {
@@ -68,10 +70,12 @@ export function setupEventListeners(view: CanvasChatView): void {
 			const width = Math.abs(currentX - view.selectionStartX);
 			const height = Math.abs(currentY - view.selectionStartY);
 
-			view.selectionBox.style.left = `${left}px`;
-			view.selectionBox.style.top = `${top}px`;
-			view.selectionBox.style.width = `${width}px`;
-			view.selectionBox.style.height = `${height}px`;
+			view.selectionBox.setCssStyles({
+				left: `${left}px`,
+				top: `${top}px`,
+				width: `${width}px`,
+				height: `${height}px`,
+			});
 
 			view.updateSelectionFromBox(left, top, width, height);
 		} else if (view.isDrawingEdge && view.edgeDrawTempLine) {
@@ -207,7 +211,7 @@ export function setupEventListeners(view: CanvasChatView): void {
 
 		if (view.isSelecting && view.selectionBox) {
 			view.isSelecting = false;
-			view.selectionBox.style.display = "none";
+			view.selectionBox.removeClass("is-active");
 		}
 	});
 
@@ -252,48 +256,50 @@ export function setupEventListeners(view: CanvasChatView): void {
 		view.canvas.removeClass("rabbitmap-canvas-drag-over");
 	});
 
-	view.canvas.addEventListener("drop", async (e) => {
+	view.canvas.addEventListener("drop", (e) => {
 		e.preventDefault();
 		view.canvas.removeClass("rabbitmap-canvas-drag-over");
 
-		const plainText = e.dataTransfer?.getData("text/plain") || "";
-		if (!plainText) return;
+		void (async () => {
+			const plainText = e.dataTransfer?.getData("text/plain") || "";
+			if (!plainText) return;
 
-		const canvasRect = view.canvas.getBoundingClientRect();
-		const dropX = (e.clientX - canvasRect.left - view.panX) / view.scale;
-		const dropY = (e.clientY - canvasRect.top - view.panY) / view.scale;
+			const canvasRect = view.canvas.getBoundingClientRect();
+			const dropX = (e.clientX - canvasRect.left - view.panX) / view.scale;
+			const dropY = (e.clientY - canvasRect.top - view.panY) / view.scale;
 
-		const lines = plainText.split("\n").map(l => l.trim()).filter(l => l);
-		let offsetIndex = 0;
+			const lines = plainText.split("\n").map(l => l.trim()).filter(l => l);
+			let offsetIndex = 0;
 
-		for (const line of lines) {
-			const path = view.parsePath(line);
-			if (!path) continue;
+			for (const line of lines) {
+				const path = view.parsePath(line);
+				if (!path) continue;
 
-			if (path.startsWith("http")) {
-				view.addLinkNode(path, dropX - 150 + offsetIndex * 30, dropY - 100 + offsetIndex * 30);
-				offsetIndex++;
-				continue;
-			}
-
-			const item = view.resolveVaultItem(path);
-
-			if (item instanceof TFolder) {
-				const mdFiles = view.getMdFilesFromFolder(item);
-				for (const file of mdFiles) {
-					try {
-						const content = await view.app.vault.read(file);
-						view.addNoteNode(file.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
-						offsetIndex++;
-					} catch {}
-				}
-			} else if (item instanceof TFile && item.extension === "md") {
-				try {
-					const content = await view.app.vault.read(item);
-					view.addNoteNode(item.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
+				if (path.startsWith("http")) {
+					view.addLinkNode(path, dropX - 150 + offsetIndex * 30, dropY - 100 + offsetIndex * 30);
 					offsetIndex++;
-				} catch {}
+					continue;
+				}
+
+				const item = view.resolveVaultItem(path);
+
+				if (item instanceof TFolder) {
+					const mdFiles = view.getMdFilesFromFolder(item);
+					for (const file of mdFiles) {
+						try {
+							const content = await view.app.vault.read(file);
+							view.addNoteNode(file.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
+							offsetIndex++;
+						} catch { /* noop */ }
+					}
+				} else if (item instanceof TFile && item.extension === "md") {
+					try {
+						const content = await view.app.vault.read(item);
+						view.addNoteNode(item.path, content, dropX + offsetIndex * 30, dropY + offsetIndex * 30);
+						offsetIndex++;
+					} catch { /* noop */ }
+				}
 			}
-		}
+		})();
 	});
 }

@@ -1022,7 +1022,26 @@ h4.rabbitmap-prompt-section-title {
 	background: rgba(var(--interactive-accent-rgb), 0.1);
 	pointer-events: none;
 	z-index: 50;
+	display: none;
 }
+
+.rabbitmap-selection-box.is-active {
+	display: block;
+}
+
+/* Generic visibility utility */
+.is-hidden {
+	display: none !important;
+}
+
+/* Add-link modal input */
+.rabbitmap-link-input {
+	width: 100%;
+	padding: 8px;
+	margin-bottom: 12px;
+}
+
+/* Minimap viewport hidden state handled via .is-hidden */
 
 /* Selected node */
 .rabbitmap-node-selected {
@@ -1039,6 +1058,10 @@ h4.rabbitmap-prompt-section-title {
 	pointer-events: none;
 	overflow: visible;
 	transform-origin: 0 0;
+}
+
+.rabbitmap-edge-group {
+	pointer-events: auto;
 }
 
 .rabbitmap-edge {
