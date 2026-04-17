@@ -2242,5 +2242,7 @@ export default class CanvasChatPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	onunload(): void {}
+	onunload(): void {
+		this.app.workspace.detachLeavesOfType(VIEW_TYPE_CANVAS_CHAT);
+	}
 }

@@ -67,6 +67,10 @@ Open the settings modal (gear icon in toolbar) to configure:
 
 Canvas Chat files use the `.canvaschat` extension and store data in JSON format.
 
+## Privacy
+
+This plugin sends your chat messages and any attached vault file content to third-party LLM providers (OpenAI, OpenRouter, or Google depending on your configuration). Your API keys are stored locally in Obsidian's plugin data. No data is sent to the plugin author or any other party.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
