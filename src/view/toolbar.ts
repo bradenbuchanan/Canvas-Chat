@@ -1,4 +1,4 @@
-import type { CanvasChatView } from "../../main";
+import type { CanvasChatView } from "../main";
 import { SettingsModal } from "../modals";
 
 export function createToolbar(view: CanvasChatView, container: Element): void {

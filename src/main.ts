@@ -20,19 +20,19 @@ import {
 	ChatNodeState,
 	CanvasChatData,
 	ChatViewHandle,
-} from "./src/types";
-import { callLLM } from "./src/llm";
+} from "./types";
+import { callLLM } from "./llm";
 import {
 	VIEW_TYPE_CANVAS_CHAT,
 	FILE_EXTENSION,
 	DEFAULT_SETTINGS,
 	DEFAULT_SYSTEM_PROMPT,
 	DEFAULT_CONTEXT_TEMPLATE,
-} from "./src/constants";
+} from "./constants";
 import {
 	PromptEditorModal,
 	ExpandedChatModal,
-} from "./src/modals";
+} from "./modals";
 import {
 	createMinimap,
 	updateMinimap,
@@ -44,7 +44,7 @@ import {
 	renderChatContent,
 	renderChatMessage,
 	rerenderNode,
-} from "./src/view";
+} from "./view";
 
 export class CanvasChatView extends TextFileView implements ChatViewHandle {
 	canvas: HTMLElement;

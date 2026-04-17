@@ -1,4 +1,4 @@
-import type { CanvasChatView } from "../../main";
+import type { CanvasChatView } from "../main";
 
 export function createMinimap(view: CanvasChatView, container: Element): void {
 	view.minimap = container.createDiv({ cls: "rabbitmap-minimap" }) as HTMLElement;

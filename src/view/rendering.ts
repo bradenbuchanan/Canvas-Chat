@@ -7,7 +7,7 @@ import {
 	TFile,
 	TFolder,
 } from "obsidian";
-import type { CanvasChatView } from "../../main";
+import type { CanvasChatView } from "../main";
 import type { CanvasNode, ChatMessage, Edge, ChatNodeState } from "../types";
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CONTEXT_TEMPLATE } from "../constants";
 import { PromptEditorModal } from "../modals";

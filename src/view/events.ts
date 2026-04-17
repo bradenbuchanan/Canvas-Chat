@@ -1,5 +1,5 @@
 import { Notice, TFile, TFolder } from "obsidian";
-import type { CanvasChatView } from "../../main";
+import type { CanvasChatView } from "../main";
 import { renderChatContent } from "./rendering";
 
 export function setupEventListeners(view: CanvasChatView): void {
