@@ -47,8 +47,8 @@ import {
 } from "./view";
 
 export class CanvasChatView extends TextFileView implements ChatViewHandle {
-	canvas: HTMLElement;
-	nodesContainer: HTMLElement;
+	canvas!: HTMLElement;
+	nodesContainer!: HTMLElement;
 	nodes: Map<string, CanvasNode> = new Map();
 	nodeElements: Map<string, HTMLElement> = new Map();
 
@@ -89,9 +89,9 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 	dragStartMouseY = 0;
 
 	// Minimap
-	minimap: HTMLElement;
-	minimapContent: HTMLElement;
-	minimapViewport: HTMLElement;
+	minimap!: HTMLElement;
+	minimapContent!: HTMLElement;
+	minimapViewport!: HTMLElement;
 	minimapNodes: Map<string, HTMLElement> = new Map();
 
 	// Chat state
@@ -100,7 +100,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 
 	// Edges
 	edges: Map<string, Edge> = new Map();
-	edgesContainer: SVGSVGElement;
+	edgesContainer!: SVGSVGElement;
 
 	// Edge drawing state
 	isDrawingEdge = false;
@@ -2150,7 +2150,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 }
 
 export default class CanvasChatPlugin extends Plugin {
-	settings: PluginSettings;
+	settings!: PluginSettings;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();

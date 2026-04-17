@@ -4,9 +4,9 @@ import type { ChatViewHandle } from "../types";
 export class ExpandedChatModal extends Modal {
 	private view: ChatViewHandle;
 	private nodeId: string;
-	private messagesContainer: HTMLElement;
-	private input: HTMLTextAreaElement;
-	private updateInterval: number;
+	private messagesContainer!: HTMLElement;
+	private input!: HTMLTextAreaElement;
+	private updateInterval!: number;
 
 	constructor(app: any, view: ChatViewHandle, nodeId: string) {
 		super(app);
