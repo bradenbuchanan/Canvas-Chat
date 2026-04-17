@@ -1624,7 +1624,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 		modal.titleEl.setText("Add link");
 		const input = modal.contentEl.createEl("input", {
 			cls: "rabbitmap-link-input",
-			attr: { type: "text", placeholder: "Paste a URL (e.g. https://...)" },
+			attr: { type: "text", placeholder: "Paste a URL" },
 		});
 
 		const btn = modal.contentEl.createEl("button", {
@@ -1815,7 +1815,7 @@ export class CanvasChatView extends TextFileView implements ChatViewHandle {
 			} else {
 				await this.fetchWebPageMetadata(url, node);
 			}
-		} catch (e) {
+		} catch {
 			// Fallback: show URL only
 			try {
 				node.linkTitle = new URL(url).hostname;

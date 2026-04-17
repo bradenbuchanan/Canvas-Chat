@@ -188,7 +188,7 @@ export function renderNode(view: CanvasChatView, node: CanvasNode): void {
 	if (node.type === "chat") {
 		const exportBtn = titleContainer.createEl("button", { cls: "rabbitmap-export-btn" });
 		setIcon(exportBtn, "download");
-		exportBtn.title = "Save as markdown";
+		exportBtn.title = "Save as Markdown";
 
 		exportBtn.onclick = (e) => {
 			e.stopPropagation();

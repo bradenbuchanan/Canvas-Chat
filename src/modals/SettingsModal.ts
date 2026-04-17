@@ -53,7 +53,7 @@ export class SettingsModal extends Modal {
 					.setDesc("API endpoint URL (change for custom/proxy deployments)")
 					.addText((text) =>
 						text
-							.setPlaceholder("https://api.example.com/v1")
+							.setPlaceholder("API endpoint URL")
 							.setValue(provider.baseUrl)
 							.onChange(async (value) => {
 								provider.baseUrl = value;
@@ -67,7 +67,7 @@ export class SettingsModal extends Modal {
 					.setDesc(`Enter your ${provider.name} API key`)
 					.addText((text) =>
 						text
-							.setPlaceholder("sk-...")
+							.setPlaceholder("API key")
 							.setValue(provider.apiKey)
 							.onChange(async (value) => {
 								provider.apiKey = value;
@@ -209,7 +209,7 @@ export class SettingsModal extends Modal {
 		});
 		linkContainer.createEl("span", { text: " | " });
 		linkContainer.createEl("a", {
-			text: "Google AI Studio",
+			text: "Google AI studio",
 			href: "https://aistudio.google.com/apikey",
 		});
 		linkContainer.createEl("span", { text: " | " });
