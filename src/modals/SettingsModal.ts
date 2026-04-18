@@ -81,9 +81,9 @@ export class SettingsModal extends Modal {
 					.setDesc("Select the API format for this provider")
 					.addDropdown((dropdown) =>
 						dropdown
-							.addOption("openai", "OpenAI")
-							.addOption("anthropic", "Anthropic")
-							.addOption("google", "Google")
+							.addOption("openai", "OpenAI format")
+							.addOption("anthropic", "Anthropic format")
+							.addOption("google", "Google format")
 							.setValue(provider.apiFormat || "openai")
 							.onChange(async (value) => {
 								provider.apiFormat = value as "openai" | "anthropic" | "google";
@@ -199,12 +199,12 @@ export class SettingsModal extends Modal {
 
 		const linkContainer = contentEl.createDiv({ cls: "rabbitmap-settings-links" });
 		linkContainer.createEl("a", {
-			text: "OpenAI",
+			text: "OpenAI keys",
 			href: "https://platform.openai.com/api-keys",
 		});
 		linkContainer.createEl("span", { text: " | " });
 		linkContainer.createEl("a", {
-			text: "OpenRouter",
+			text: "OpenRouter keys",
 			href: "https://openrouter.ai/keys",
 		});
 		linkContainer.createEl("span", { text: " | " });
