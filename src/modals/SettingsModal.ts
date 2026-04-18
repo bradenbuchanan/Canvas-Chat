@@ -81,9 +81,9 @@ export class SettingsModal extends Modal {
 					.setDesc("Select the API format for this provider")
 					.addDropdown((dropdown) =>
 						dropdown
-							.addOption("openai", "OpenAI compatible")
-							.addOption("anthropic", "Anthropic (Claude)")
-							.addOption("google", "Google (Gemini)")
+							.addOption("openai", "OpenAI")
+							.addOption("anthropic", "Anthropic")
+							.addOption("google", "Google")
 							.setValue(provider.apiFormat || "openai")
 							.onChange(async (value) => {
 								provider.apiFormat = value as "openai" | "anthropic" | "google";
@@ -199,7 +199,7 @@ export class SettingsModal extends Modal {
 
 		const linkContainer = contentEl.createDiv({ cls: "rabbitmap-settings-links" });
 		linkContainer.createEl("a", {
-			text: "OpenAI platform",
+			text: "OpenAI",
 			href: "https://platform.openai.com/api-keys",
 		});
 		linkContainer.createEl("span", { text: " | " });
